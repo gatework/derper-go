@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "hostname": "relay.example.com",
+  "listen": ":8443",
+  "http_port": -1,
+  "state_dir": "/var/lib/derper",
+  "node_key_file": "/var/lib/derper/derper.key",
+  "stun": {
+    "enabled": true,
+    "listen": ":3478"
+  },
+  "verification": {
+    "mode": "tailscaled",
+    "socket": "/run/tailscale/tailscaled.sock"
+  },
+  "tls": {
+    "mode": "acme"
+  },
+  "acme": {
+    "email": "ops@example.com",
+    "accept_terms": true,
+    "propagation_timeout": "2m"
+  },
+  "cloudflare": {
+    "token_file": "/etc/derper/cloudflare.token"
+  },
+  "dns": {
+    "mode": "manage",
+    "ipv4": "192.0.2.1",
+    "ttl": 1,
+    "interval": "5m"
+  },
+  "region": {
+    "id": 900,
+    "code": "custom",
+    "name": "Custom relay",
+    "node": "custom1"
+  },
+  "log_level": "info"
+}

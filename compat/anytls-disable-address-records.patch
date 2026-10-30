@@ -1,0 +1,122 @@
+diff --git a/internal/certmgr/config.go b/internal/certmgr/config.go
+index 8464388..14190cc 100644
+--- a/internal/certmgr/config.go
++++ b/internal/certmgr/config.go
+@@ -22,16 +22,17 @@ type CloudflareConfig struct {
+ }
+ 
+ type Config struct {
+-	Domain             string           `json:"domain"`
+-	Email              string           `json:"email"`
+-	AcceptTerms        bool             `json:"accept_terms"`
+-	DirectoryURL       string           `json:"directory_url,omitempty"`
+-	CacheDir           string           `json:"cache_dir,omitempty"`
+-	IPv4               string           `json:"ipv4,omitempty"`
+-	IPv4URL            string           `json:"ipv4_url,omitempty"`
+-	DNSInterval        string           `json:"dns_interval,omitempty"`
+-	PropagationTimeout string           `json:"propagation_timeout,omitempty"`
+-	Cloudflare         CloudflareConfig `json:"cloudflare"`
++	PublishAddressRecords *bool            `json:"publish_address_records,omitempty"`
++	Domain                string           `json:"domain"`
++	Email                 string           `json:"email"`
++	AcceptTerms           bool             `json:"accept_terms"`
++	DirectoryURL          string           `json:"directory_url,omitempty"`
++	CacheDir              string           `json:"cache_dir,omitempty"`
++	IPv4                  string           `json:"ipv4,omitempty"`
++	IPv4URL               string           `json:"ipv4_url,omitempty"`
++	DNSInterval           string           `json:"dns_interval,omitempty"`
++	PropagationTimeout    string           `json:"propagation_timeout,omitempty"`
++	Cloudflare            CloudflareConfig `json:"cloudflare"`
+ }
+ 
+ var domainLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+@@ -136,3 +137,8 @@ func ipv4(value string) (string, error) {
+ 	}
+ 	return ip.String(), nil
+ }
++
++// Address publication is enabled by default for backward compatibility.
++func (c Config) publishAddressRecords() bool {
++	return c.PublishAddressRecords == nil || *c.PublishAddressRecords
++}
+diff --git a/internal/certmgr/manager.go b/internal/certmgr/manager.go
+index 93f5e4c..aab3f23 100644
+--- a/internal/certmgr/manager.go
++++ b/internal/certmgr/manager.go
+@@ -124,7 +124,7 @@ func (m *Manager) Start(parent context.Context) (err error) {
+ 	_, cachedErr := m.GetCertificate(nil)
+ 	cached := cachedErr == nil
+ 	if !cached {
+-		if !m.config.Cloudflare.Proxied {
++		if m.config.publishAddressRecords() && !m.config.Cloudflare.Proxied {
+ 			if err = m.syncDNS(ctx); err != nil {
+ 				return fmt.Errorf("initial DNS synchronization: %w", err)
+ 			}
+@@ -133,7 +133,7 @@ func (m *Manager) Start(parent context.Context) (err error) {
+ 			return fmt.Errorf("initial ACME issuance: %w", err)
+ 		}
+ 		// CDN A 记录仅在源站证书就绪后启用代理；DNS-01 签发不依赖 A 记录。
+-		if m.config.Cloudflare.Proxied {
++		if m.config.publishAddressRecords() && m.config.Cloudflare.Proxied {
+ 			if err = m.syncDNS(ctx); err != nil {
+ 				return fmt.Errorf("initial DNS synchronization: %w", err)
+ 			}
+@@ -143,8 +143,11 @@ func (m *Manager) Start(parent context.Context) (err error) {
+ 		return err
+ 	}
+ 	dnsInterval, _ := time.ParseDuration(m.config.DNSInterval)
+-	m.wg.Add(2)
+-	go m.maintain(ctx, dnsInterval, "DNS synchronization", m.syncDNS, cached)
++	m.wg.Add(1)
++	if m.config.publishAddressRecords() {
++		m.wg.Add(1)
++		go m.maintain(ctx, dnsInterval, "DNS synchronization", m.syncDNS, cached)
++	}
+ 	go m.maintainScheduled(ctx, certificateCheckInterval, "ACME renewal", m.maintainCertificate, cached, m.certificateCheckDelay)
+ 	return nil
+ }
+diff --git a/internal/certmgr/no_publish_test.go b/internal/certmgr/no_publish_test.go
+new file mode 100644
+index 0000000..1de8676
+--- /dev/null
++++ b/internal/certmgr/no_publish_test.go
+@@ -0,0 +1,26 @@
++package certmgr
++
++import (
++	"context"
++	"testing"
++)
++
++func TestDisabledAddressPublishingRetainsACME(t *testing.T) {
++	c := testConfig(t)
++	disabled := false
++	c.PublishAddressRecords = &disabled
++	f := newACMEFixture(t, c.Domain)
++	m := f.manager(t, c)
++	if err := m.Start(context.Background()); err != nil {
++		t.Fatal(err)
++	}
++	defer m.Close()
++	if err := m.renew(context.Background()); err != nil {
++		t.Fatal(err)
++	}
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	if f.orders != 2 || f.a.Content != "" || len(f.txt) != 0 || f.deleted != 2 {
++		t.Fatalf("orders=%d A=%v TXT=%v deleted=%d", f.orders, f.a, f.txt, f.deleted)
++	}
++}
+diff --git a/internal/config/config_decode.go b/internal/config/config_decode.go
+index d863261..b5bca4f 100644
+--- a/internal/config/config_decode.go
++++ b/internal/config/config_decode.go
+@@ -26,7 +26,7 @@ var configurationFields = configFields{
+ 		"certificate_sha256": nil, "ca_file": nil, "client_ca_file": nil, "insecure": nil,
+ 	},
+ 	"acme": {
+-		"domain": nil, "email": nil, "accept_terms": nil, "directory_url": nil, "cache_dir": nil,
++		"publish_address_records": nil, "domain": nil, "email": nil, "accept_terms": nil, "directory_url": nil, "cache_dir": nil,
+ 		"ipv4": nil, "ipv4_url": nil, "dns_interval": nil, "propagation_timeout": nil,
+ 		"cloudflare": {"zone_id": nil, "token_env": nil, "token_file": nil},
+ 	},

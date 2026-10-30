@@ -1,0 +1,9 @@
+/bin/
+/derper-go
+/dist/
+/coverage.out
+/derper-server.json
+/state/
+*.token
+*.key
+*.pem

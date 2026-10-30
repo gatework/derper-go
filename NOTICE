@@ -1,0 +1,14 @@
+derper-go
+Copyright (c) 2026 gatework contributors
+
+ACME, Cloudflare API and bounded-file components and their initial tests are
+adapted from github.com/gatework/anytls-go, commit
+993de621b283d51c1f7cb1cbc4b0acefecbdd583, under the MIT license.
+Copyright (c) 2026 AnyTLS Go contributors. See LICENSE.
+
+DERP/STUN implementation is imported from tailscale.com v1.104.4.
+Copyright Tailscale Inc & contributors, BSD-3-Clause.
+Its source and license are available at https://github.com/tailscale/tailscale.
+
+Other Go module dependencies retain their respective licenses. The packaging
+script copies available module license files into the binary archive.

@@ -1,0 +1,53 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Formatting and module consistency
+        run: |
+          test -z "$(gofmt -l cmd internal)"
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - run: go test -race -timeout 5m ./...
+      - run: go vet ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - name: CLI and systemd smoke checks
+        run: |
+          make build
+          bin/derper-go version
+          bin/derper-go check -c examples/server.json
+          bin/derper-go export-derpmap -c examples/server.json
+          bin/derper-go service render -c examples/server.json --binary "$PWD/bin/derper-go" > "$RUNNER_TEMP/derper-go.service"
+          diagnostics=$(systemd-analyze verify "$RUNNER_TEMP/derper-go.service" 2>&1)
+          if test -n "$diagnostics"; then
+            printf '%s\n' "$diagnostics"
+            exit 1
+          fi
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build Linux binary without CGO
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+        run: go build -trimpath -o derper-go ./cmd/derper-go
