@@ -45,7 +45,7 @@ Token 也可通过 `CLOUDFLARE_API_TOKEN` 传入，不支持明文 Token 命令�
 
 - `init --no-start`：安装并启用服务，暂不启动；随后使用 `service start`。
 - `init --no-service`：只生成前台配置，默认写入当前目录 `config.json`；按输出的 `run` 命令启动。
-- 重复 `init`：已完成部署显示状态，保留配置、节点身份和证书。修改已有配置后使用 `service restart`。
+- 重复 `init`：已完成部署显示状态，保留配置、节点身份和证书。修改已有配置后使用 `service restart`，会同步更新所需端口权限和凭据来源。
 - 初始化中断：修复错误后重试同一命令，继续尚未完成的准备工作。若服务已准备但启动失败，使用 `service start`；DNS 暂时失败时服务保留并自动重试。
 - 终端直接运行 `derper-go`：首次进入向导，已有默认配置时显示状态；非终端无参数只显示帮助。
 

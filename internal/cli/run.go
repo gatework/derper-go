@@ -166,13 +166,31 @@ func execute(ctx context.Context, args []string, ui terminal) int {
 		return failure(ui, err)
 	}
 	if strings.HasPrefix(name, "service/") && name != "service/render" {
-		if name == "service/logs" {
-			err = systemd.Logs(ctx, ui.out, ui.err)
-		} else {
-			err = systemd.Control(ctx, strings.TrimPrefix(name, "service/"))
+		if path != config.DefaultPath || dir != config.DefaultDataDir {
+			return failure(ui, errors.New("service 命令管理标准路径下的 derper-go.service；自定义单元请使用 systemctl"))
 		}
-		return result(ui, err)
+		if name == "service/logs" {
+			return result(ui, systemd.Logs(ctx, ui.out, ui.err))
+		}
+		if name == "service/start" || name == "service/restart" {
+			c, e := config.Load(path)
+			if e != nil {
+				return failure(ui, e)
+			}
+			s, e := setup.Resolve(c, path)
+			if e != nil {
+				return failure(ui, e)
+			}
+			if e = daemon.Check(s); e != nil {
+				return failure(ui, e)
+			}
+			if e = systemd.Refresh(ctx, s); e != nil {
+				return failure(ui, e)
+			}
+		}
+		return result(ui, systemd.Control(ctx, strings.TrimPrefix(name, "service/")))
 	}
+
 	c, err := config.Load(path)
 	if err != nil {
 		return failure(ui, err)

@@ -202,10 +202,10 @@ func Install(ctx context.Context, path string, s config.Settings) error {
 	if err = state.WriteFile(UnitPath, []byte(unit), 0644, false); err != nil {
 		return err
 	}
-	output, err := exec.CommandContext(ctx, "systemctl", "daemon-reload").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("重新加载 systemd 失败：%w：%s", err, output)
+	if err = reload(ctx); err != nil {
+		return err
 	}
+
 	return Control(ctx, "enable")
 }
 func copyExecutable(source, target string) error {
@@ -315,5 +315,31 @@ func checkUnit() error {
 		return e
 	}
 
+	return nil
+}
+
+// Refresh reapplies the unit derived from current operator intent. In particular,
+// capabilities and credential sources must change with the saved configuration.
+func Refresh(ctx context.Context, s config.Settings) error {
+	if err := Check(); err != nil {
+		return err
+	}
+	if _, err := os.Stat(UnitPath); err != nil {
+		return errors.New("服务尚未安装，请先运行 sudo derper-go init")
+	}
+	unit, err := Render(Binary, config.DefaultPath, s)
+	if err != nil {
+		return err
+	}
+	if err = state.WriteFile(UnitPath, []byte(unit), 0644, false); err != nil {
+		return err
+	}
+	return reload(ctx)
+}
+func reload(ctx context.Context) error {
+	output, err := exec.CommandContext(ctx, "systemctl", "daemon-reload").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("重新加载 systemd 失败：%w：%s", err, output)
+	}
 	return nil
 }

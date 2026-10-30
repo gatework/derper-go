@@ -43,9 +43,18 @@ test "$identity" = "$(sha256sum /var/lib/derper-go/identity.json)"
 derper-go init --yes
 test "$identity" = "$(sha256sum /var/lib/derper-go/identity.json)"
 test "$configuration" = "$(sha256sum /etc/derper-go/config.json)"
+# A changed low port must update the generated unit, not only reload JSON.
+kill "$occupant"
+wait "$occupant" || true
+occupant=
+jq '.port = 443' /etc/derper-go/config.json > /tmp/updated-config.json
+cat /tmp/updated-config.json > /etc/derper-go/config.json
+derper-go service restart
+systemctl show derper-go.service -p AmbientCapabilities --value | grep -q cap_net_bind_service
+test "$identity" = "$(sha256sum /var/lib/derper-go/identity.json)"
 # Validate the actual TLS listener with a local trust root.
 printf 'GET /derp/probe HTTP/1.1\r\nHost: relay.example.com\r\nConnection: close\r\n\r\n' |
-  openssl s_client -quiet -connect 127.0.0.1:8443 -servername relay.example.com \
+  openssl s_client -quiet -connect 127.0.0.1:443 -servername relay.example.com \
     -CAfile /etc/derper-go/certificate.pem -verify_return_error > /tmp/probe.txt
 # grep is available in the minimal test image; no ripgrep dependency is needed.
 grep -q 'HTTP/1.1 200' /tmp/probe.txt
