@@ -6,7 +6,6 @@ import (
 	"net/mail"
 	"net/netip"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -48,18 +47,6 @@ func (c Options) normalized() Options {
 		c.Cloudflare.TokenEnv = "CLOUDFLARE_API_TOKEN"
 	}
 	return c
-}
-
-// ResolvePaths 在 CLI 加载配置时固定相对路径，包括默认缓存目录。
-func (c *Options) ResolvePaths(base string) {
-	if c.CacheDir == "" {
-		c.CacheDir = "acme"
-	}
-	for _, p := range []*string{&c.CacheDir, &c.Cloudflare.TokenFile} {
-		if *p != "" && !filepath.IsAbs(*p) {
-			*p = filepath.Join(base, *p)
-		}
-	}
 }
 
 // Validate 只校验结构，不读取凭据、不发起网络请求或创建缓存。

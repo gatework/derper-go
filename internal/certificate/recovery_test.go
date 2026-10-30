@@ -13,7 +13,7 @@ import (
 )
 
 func TestValidCacheStartsWithoutCredentials(t *testing.T) {
-	c := testConfig(t)
+	c := renewalOptions(t)
 	seed, _ := New(c, nil, nil)
 	if err := seed.openCache(); err != nil {
 		t.Fatal(err)
@@ -36,7 +36,7 @@ func TestValidCacheStartsWithoutCredentials(t *testing.T) {
 }
 
 func TestRetryAfterSurvivesRestart(t *testing.T) {
-	c := testConfig(t)
+	c := renewalOptions(t)
 	m, _ := New(c, nil, nil)
 	if err := m.openCache(); err != nil {
 		t.Fatal(err)

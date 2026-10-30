@@ -287,7 +287,7 @@ func (f *acmeFixture) manager(t *testing.T, c Options) *Renewer {
 }
 
 func TestACMEIssueRenewRestart(t *testing.T) {
-	c := testConfig(t)
+	c := renewalOptions(t)
 	f := newACMEFixture(t, c.Domain)
 	f.txt = []record{{ID: "unrelated", Name: "_acme-challenge." + c.Domain, Content: "other-owner", Type: "TXT"}}
 	m := f.manager(t, c)
@@ -362,7 +362,7 @@ func TestACMEIssueRenewRestart(t *testing.T) {
 }
 
 func TestACMECancelCleansTXT(t *testing.T) {
-	c := testConfig(t)
+	c := renewalOptions(t)
 	f := newACMEFixture(t, c.Domain)
 	m := f.manager(t, c)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -390,7 +390,7 @@ func TestACMECancelCleansTXT(t *testing.T) {
 func TestRestartCleansPendingTXTWithValidCache(t *testing.T) {
 	for _, quoted := range []bool{false, true} {
 		t.Run(fmt.Sprintf("quoted_API_%v", quoted), func(t *testing.T) {
-			c := testConfig(t)
+			c := renewalOptions(t)
 			f := newACMEFixture(t, c.Domain)
 			m := f.manager(t, c)
 			if err := m.Start(context.Background()); err != nil {
@@ -444,7 +444,7 @@ func TestLiveCleanupRefusesModifiedTXT(t *testing.T) {
 		"malformed":      func(value string) string { return value[:len(value)-1] },
 	} {
 		t.Run(name, func(t *testing.T) {
-			c := testConfig(t)
+			c := renewalOptions(t)
 			f := newACMEFixture(t, c.Domain)
 			m := f.manager(t, c)
 			ctx, cancel := context.WithCancel(context.Background())
@@ -470,7 +470,7 @@ func TestLiveCleanupRefusesModifiedTXT(t *testing.T) {
 }
 
 func TestLostTXTCreateResponseIsRecoverable(t *testing.T) {
-	c := testConfig(t)
+	c := renewalOptions(t)
 	f := newACMEFixture(t, c.Domain)
 	m := f.manager(t, c)
 	transport := m.http.Transport
@@ -505,7 +505,7 @@ func TestLostTXTCreateResponseIsRecoverable(t *testing.T) {
 }
 
 func TestCachedStartDoesNotWaitForControlPlane(t *testing.T) {
-	c := testConfig(t)
+	c := renewalOptions(t)
 	f := newACMEFixture(t, c.Domain)
 	m := f.manager(t, c)
 	if err := m.openCache(); err != nil {
@@ -529,7 +529,7 @@ func TestCachedStartDoesNotWaitForControlPlane(t *testing.T) {
 }
 
 func TestIssuanceBudgetIncludesPropagation(t *testing.T) {
-	c := testConfig(t)
+	c := renewalOptions(t)
 	c.PropagationTimeout = 20 * time.Minute
 	m, _ := New(c, nil, nil)
 	if m.issuanceTimeout() < 20*time.Minute+time.Minute {
@@ -538,7 +538,7 @@ func TestIssuanceBudgetIncludesPropagation(t *testing.T) {
 }
 
 func TestBackgroundRenewsDueCachedCertificate(t *testing.T) {
-	c := testConfig(t)
+	c := renewalOptions(t)
 	f := newACMEFixture(t, c.Domain)
 	seed := f.manager(t, c)
 	if err := seed.openCache(); err != nil {
@@ -576,7 +576,7 @@ func TestBackgroundRenewsDueCachedCertificate(t *testing.T) {
 }
 
 func TestShortLivedCertificateRenewsBeforeExpiry(t *testing.T) {
-	c := testConfig(t)
+	c := renewalOptions(t)
 	f := newACMEFixture(t, c.Domain)
 	f.certificateLifetime = 6 * time.Second
 	m := f.manager(t, c)
@@ -609,7 +609,7 @@ func TestShortLivedCertificateRenewsBeforeExpiry(t *testing.T) {
 }
 
 func TestDueCertificateRenewalDoesNotBusyLoop(t *testing.T) {
-	c := testConfig(t)
+	c := renewalOptions(t)
 	f := newACMEFixture(t, c.Domain)
 	f.certificateLifetime = 6 * time.Second
 	f.certificateBackdate = time.Minute

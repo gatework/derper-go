@@ -35,7 +35,7 @@ func testBundle(t *testing.T, domain string, expiry time.Time) []byte {
 }
 
 func TestCertificatePersistenceAndReplacement(t *testing.T) {
-	c := testConfig(t)
+	c := renewalOptions(t)
 	m, err := New(c, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -93,12 +93,12 @@ func TestCertificatePersistenceAndReplacement(t *testing.T) {
 }
 
 func TestExpiredCertificateAndCancel(t *testing.T) {
-	m, err := New(testConfig(t), nil, nil)
+	m, err := New(renewalOptions(t), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// 直接解析同一份缓存，验证握手时的过期检查。
-	b := testBundle(t, m.config.Domain, time.Now().Add(-time.Second))
+	b := testBundle(t, m.options.Domain, time.Now().Add(-time.Second))
 	pair, err := tls.X509KeyPair(b, b)
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestExpiredCertificateAndCancel(t *testing.T) {
 }
 
 func TestMaintenanceRetriesBeforeRegularInterval(t *testing.T) {
-	m, err := New(testConfig(t), nil, nil)
+	m, err := New(renewalOptions(t), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestCertificateCheckDelay(t *testing.T) {
 		{"not_yet_valid", now.Add(time.Minute), now.Add(time.Hour), 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m, err := New(testConfig(t), nil, nil)
+			m, err := New(renewalOptions(t), nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -196,7 +196,7 @@ func TestCertificateCheckDelay(t *testing.T) {
 }
 
 func TestMaintenanceHandlesNewlyDueState(t *testing.T) {
-	m, err := New(testConfig(t), nil, nil)
+	m, err := New(renewalOptions(t), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestCertificateRetryDelay(t *testing.T) {
 		{"expired", -time.Second, 30 * time.Second},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m, err := New(testConfig(t), nil, nil)
+			m, err := New(renewalOptions(t), nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -268,7 +268,7 @@ func TestCertificateRetryDelay(t *testing.T) {
 }
 
 func TestOfflineReadMatchesActiveCertificate(t *testing.T) {
-	c := testConfig(t)
+	c := renewalOptions(t)
 	m, err := New(c, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -297,7 +297,7 @@ func TestRenewerStartIsSingleUse(t *testing.T) {
 	for _, before := range []string{"close", "failure"} {
 		t.Run(before, func(t *testing.T) {
 			calls := 0
-			m, err := New(testConfig(t), nil, func(string) string { calls++; return "" })
+			m, err := New(renewalOptions(t), nil, func(string) string { calls++; return "" })
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -320,7 +320,7 @@ func TestRenewerStartIsSingleUse(t *testing.T) {
 
 func TestRenewerCloseWaitsForStarting(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
-	m, err := New(testConfig(t), nil, func(string) string { close(entered); <-release; return "" })
+	m, err := New(renewalOptions(t), nil, func(string) string { close(entered); <-release; return "" })
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -209,7 +209,7 @@ func execute(ctx context.Context, args []string, ui terminal) int {
 		}
 	case "tailnet/config":
 		var b []byte
-		b, err = daemon.Export(s, format)
+		b, err = daemon.ExportTailnetConfig(s, format)
 		if err == nil {
 			_, err = ui.out.Write(b)
 		}
@@ -236,7 +236,7 @@ func execute(ctx context.Context, args []string, ui terminal) int {
 		}
 		request, cancel := context.WithTimeout(ctx, time.Minute)
 		defer cancel()
-		publisher := daemon.DNS(s, dir, nil)
+		publisher := daemon.NewDNSPublisher(s, dir, nil)
 		changes, e := publisher.Plan(request)
 		err = e
 		if err != nil {

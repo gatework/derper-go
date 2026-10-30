@@ -5,12 +5,12 @@ import (
 	"time"
 )
 
-func testConfig(t *testing.T) Options {
+func renewalOptions(t *testing.T) Options {
 	t.Helper()
 	return Options{Domain: "vpn.example.com", Email: "ops@example.com", AcceptTerms: true, CacheDir: t.TempDir(), Cloudflare: CloudflareOptions{ZoneID: "0123456789abcdef0123456789abcdef"}}
 }
 
-func TestConfigValidation(t *testing.T) {
+func TestOptionsValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		change func(*Options)
@@ -24,14 +24,14 @@ func TestConfigValidation(t *testing.T) {
 		{"duration", func(c *Options) { c.PropagationTimeout = -time.Second }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c := testConfig(t)
+			c := renewalOptions(t)
 			tc.change(&c)
 			if err := c.Validate(); err == nil {
 				t.Fatal("invalid config accepted")
 			}
 		})
 	}
-	c := testConfig(t)
+	c := renewalOptions(t)
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}

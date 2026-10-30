@@ -34,7 +34,7 @@ type Renewer struct {
 	failure atomic.Pointer[renewalFailure]
 	*Store
 	certificateMu sync.Mutex
-	config        Options
+	options       Options
 	logger        *slog.Logger
 	getenv        func(string) string
 	http          *http.Client
@@ -60,11 +60,11 @@ func New(c Options, logger *slog.Logger, getenv func(string) string) (*Renewer, 
 		getenv = os.Getenv
 	}
 	client := cloudflare.HTTPClient()
-	return &Renewer{Store: &Store{domain: c.normalized().Domain}, config: c.normalized(), logger: logger, getenv: getenv, http: client, lookupTXT: net.DefaultResolver.LookupTXT}, nil
+	return &Renewer{Store: &Store{domain: c.normalized().Domain}, options: c.normalized(), logger: logger, getenv: getenv, http: client, lookupTXT: net.DefaultResolver.LookupTXT}, nil
 }
 
 func (m *Renewer) token() (string, error) {
-	return (cloudflare.Credentials{File: m.config.Cloudflare.TokenFile, Environment: m.config.Cloudflare.TokenEnv}).ReadEnv(m.getenv)
+	return (cloudflare.Credentials{File: m.options.Cloudflare.TokenFile, Environment: m.options.Cloudflare.TokenEnv}).ReadEnv(m.getenv)
 }
 
 func (m *Renewer) Start(parent context.Context) (err error) {
@@ -95,7 +95,7 @@ func (m *Renewer) Start(parent context.Context) (err error) {
 			m.Close()
 		}
 	}()
-	m.dns = cloudflare.NewSource(m.token, m.config.Cloudflare.ZoneID, m.http)
+	m.dns = cloudflare.NewSource(m.token, m.options.Cloudflare.ZoneID, m.http)
 	if err = m.openCache(); err != nil {
 		return err
 	}

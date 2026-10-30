@@ -64,7 +64,7 @@ func Renew(ctx context.Context, c Options, force bool) error {
 	if err = m.loadCertificate(); err != nil {
 		return err
 	}
-	m.dns = cloudflare.NewSource(m.token, m.config.Cloudflare.ZoneID, m.http)
+	m.dns = cloudflare.NewSource(m.token, m.options.Cloudflare.ZoneID, m.http)
 	if force || m.renewDue(time.Now()) {
 		return m.renew(ctx)
 	}
@@ -89,7 +89,7 @@ func CachedStatus(c Options) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	m.cachePath = cachePath(m.config)
+	m.cachePath = cachePath(m.options)
 	if err = m.loadCertificate(); err != nil {
 		return Status{}, err
 	}
@@ -97,5 +97,5 @@ func CachedStatus(c Options) (Status, error) {
 	if pair == nil {
 		return Status{}, errors.New("no cached certificate")
 	}
-	return CertificateStatus(pair.Leaf, m.config.Domain), nil
+	return CertificateStatus(pair.Leaf, m.options.Domain), nil
 }

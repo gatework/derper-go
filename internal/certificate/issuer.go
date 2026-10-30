@@ -34,7 +34,7 @@ func (m *Renewer) renew(parent context.Context) (result error) {
 	}()
 	ctx, cancel := context.WithTimeout(parent, m.issuanceTimeout())
 	defer cancel()
-	if err := m.dns.CheckZone(ctx, m.config.Domain); err != nil {
+	if err := m.dns.CheckZone(ctx, m.options.Domain); err != nil {
 		return err
 	}
 	if err := m.cleanupPending(ctx); err != nil {
@@ -44,8 +44,8 @@ func (m *Renewer) renew(parent context.Context) (result error) {
 	if err != nil {
 		return err
 	}
-	client := &acme.Client{Key: key, DirectoryURL: m.config.DirectoryURL, HTTPClient: m.http, UserAgent: "derper-go"}
-	_, err = client.Register(ctx, &acme.Account{Contact: []string{"mailto:" + m.config.Email}}, func(string) bool { return m.config.AcceptTerms })
+	client := &acme.Client{Key: key, DirectoryURL: m.options.DirectoryURL, HTTPClient: m.http, UserAgent: "derper-go"}
+	_, err = client.Register(ctx, &acme.Account{Contact: []string{"mailto:" + m.options.Email}}, func(string) bool { return m.options.AcceptTerms })
 	if err != nil && !errors.Is(err, acme.ErrAccountAlreadyExists) {
 		return fmt.Errorf("register ACME account: %w", err)
 	}
@@ -56,12 +56,12 @@ func (m *Renewer) renew(parent context.Context) (result error) {
 	if err = m.install(bundle); err != nil {
 		return err
 	}
-	m.logger.Info("ACME certificate installed", "domain", m.config.Domain, "expires", m.current.Load().Leaf.NotAfter)
+	m.logger.Info("ACME certificate installed", "domain", m.options.Domain, "expires", m.current.Load().Leaf.NotAfter)
 	return nil
 }
 
 func (m *Renewer) issue(ctx context.Context, client *acme.Client) ([]byte, error) {
-	order, err := client.AuthorizeOrder(ctx, acme.DomainIDs(m.config.Domain))
+	order, err := client.AuthorizeOrder(ctx, acme.DomainIDs(m.options.Domain))
 	if err != nil {
 		return nil, fmt.Errorf("create ACME order: %w", err)
 	}
@@ -70,7 +70,7 @@ func (m *Renewer) issue(ctx context.Context, client *acme.Client) ([]byte, error
 		if err != nil {
 			return nil, err
 		}
-		if auth.Identifier.Type != "dns" || auth.Identifier.Value != m.config.Domain || auth.Wildcard {
+		if auth.Identifier.Type != "dns" || auth.Identifier.Value != m.options.Domain || auth.Wildcard {
 			return nil, fmt.Errorf("ACME returned unexpected authorization identifier")
 		}
 		if auth.Status == acme.StatusValid {
@@ -101,7 +101,7 @@ func (m *Renewer) issue(ctx context.Context, client *acme.Client) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{DNSNames: []string{m.config.Domain}}, key)
+	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{DNSNames: []string{m.options.Domain}}, key)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +125,7 @@ func (m *Renewer) authorize(ctx context.Context, client *acme.Client, authURL st
 	if err != nil {
 		return err
 	}
-	name := "_acme-challenge." + m.config.Domain
+	name := "_acme-challenge." + m.options.Domain
 	// 不跟随 DNS CNAME 到其他区域，避免在未授权区域创建验证记录。
 	existing, err := m.dns.ListRecords(ctx, name)
 	if err != nil {
@@ -165,7 +165,7 @@ func (m *Renewer) authorize(ctx context.Context, client *acme.Client, authURL st
 	if err = atomicWrite(journal, data); err != nil {
 		return err
 	}
-	timeout := m.config.PropagationTimeout
+	timeout := m.options.PropagationTimeout
 	propagation, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	for {
@@ -199,10 +199,10 @@ func (m *Renewer) cleanupPending(parent context.Context) error {
 	if err = json.Unmarshal(b, &pending); err != nil {
 		return fmt.Errorf("invalid ACME cleanup journal: %w", err)
 	}
-	if pending.Type != "TXT" || pending.Name != "_acme-challenge."+m.config.Domain || (pending.ID == "" && !strings.HasPrefix(pending.Comment, "derper-acme-")) {
+	if pending.Type != "TXT" || pending.Name != "_acme-challenge."+m.options.Domain || (pending.ID == "" && !strings.HasPrefix(pending.Comment, "derper-acme-")) {
 		return fmt.Errorf("invalid ACME cleanup journal record")
 	}
-	if err = m.dns.CheckZone(ctx, m.config.Domain); err != nil {
+	if err = m.dns.CheckZone(ctx, m.options.Domain); err != nil {
 		return err
 	}
 	records, err := m.dns.ListRecords(ctx, pending.Name)
@@ -242,6 +242,6 @@ func (m *Renewer) cleanupPending(parent context.Context) error {
 }
 
 func (m *Renewer) issuanceTimeout() time.Duration {
-	propagation := m.config.PropagationTimeout
+	propagation := m.options.PropagationTimeout
 	return propagation + 10*time.Minute
 }

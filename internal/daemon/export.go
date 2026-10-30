@@ -33,7 +33,7 @@ type policyFragment struct {
 	DERPMap regionPolicy `json:"derpMap"`
 }
 
-func Export(c config.Settings, format string) ([]byte, error) {
+func ExportTailnetConfig(c config.Settings, format string) ([]byte, error) {
 	m := DERPMap(c)
 	var value any = m
 	switch format {

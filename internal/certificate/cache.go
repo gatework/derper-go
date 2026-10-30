@@ -20,7 +20,7 @@ import (
 )
 
 func (m *Renewer) openCache() error {
-	m.cachePath = cachePath(m.config)
+	m.cachePath = cachePath(m.options)
 	if err := os.MkdirAll(m.cachePath, 0700); err != nil {
 		return err
 	}
@@ -145,8 +145,8 @@ func ReadCachedCertificate(c Options) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256([]byte(m.config.DirectoryURL + "\n" + m.config.Domain))
-	m.cachePath = filepath.Join(m.config.CacheDir, hex.EncodeToString(sum[:]))
+	sum := sha256.Sum256([]byte(m.options.DirectoryURL + "\n" + m.options.Domain))
+	m.cachePath = filepath.Join(m.options.CacheDir, hex.EncodeToString(sum[:]))
 	if err = m.loadCertificate(); err != nil {
 		return nil, err
 	}
