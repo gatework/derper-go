@@ -20,6 +20,7 @@ cleanup() {
   systemctl stop "$unit" >/dev/null 2>&1 || true
   systemctl reset-failed "$unit" >/dev/null 2>&1 || true
   rm -f "/run/systemd/system/$unit"
+  rm -rf "/run/systemd/system/$unit.d"
   systemctl daemon-reload
   rm -rf "$work" "/var/lib/$state_name"
   exit "$result"
@@ -47,10 +48,17 @@ jq -n --arg token "$work/cloudflare.token" \
       -e 's/^User=derper-go$/User=nobody/' \
       -e 's/^Group=derper-go$/Group=nogroup/' \
       -e "s/^StateDirectory=derper-go$/StateDirectory=$state_name/" \
+      -e "s/^RuntimeDirectory=derper-go$/RuntimeDirectory=$state_name/" \
       > "/run/systemd/system/$unit"
 grep -Fx "LoadCredential=cloudflare-token:$work/cloudflare.token" "/run/systemd/system/$unit"
 systemctl daemon-reload
 systemctl start "$unit"
 test "$(systemctl show "$unit" -p Result --value)" = success
 test "$(stat -c '%a:%U' "$work/cloudflare.token")" = 600:root
+# Verify the v0.1.0 gz credential override remains compatible during upgrade.
+mkdir -p "/run/systemd/system/$unit.d"
+printf '[Service]\nLoadCredential=\nLoadCredential=cloudflare-token:%s/cloudflare.token\n' "$work" > "/run/systemd/system/$unit.d/10-credentials.conf"
+systemctl daemon-reload
+systemctl start "$unit"
+test "$(systemctl show "$unit" -p Result --value)" = success
 printf 'Rendered systemd unit loaded the root-only credential successfully.\n'

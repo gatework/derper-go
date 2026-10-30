@@ -250,6 +250,9 @@ func (m *Renewer) RenewalError() error {
 func (m *Renewer) maintainCleanup(ctx context.Context) {
 	defer m.wg.Done()
 	delay, backoff := time.Duration(0), 30*time.Second
+	if err := m.CleanupError(); err != nil {
+		delay = retry.Jitter(max(backoff, retryDelay(err)))
+	}
 	for {
 		if wait(ctx, delay) != nil {
 			return

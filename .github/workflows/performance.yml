@@ -1,0 +1,99 @@
+name: Relay performance
+on:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: Full baseline commit SHA
+        required: true
+        default: 9c6a15641d1c0440fcedd9e67688da6c757ddb42
+      duration:
+        description: Seconds of sustained forwarding per version and trial
+        type: number
+        default: 600
+      connections:
+        description: Connected DERP nodes (even, up to 1000)
+        type: number
+        default: 1000
+permissions:
+  contents: read
+concurrency:
+  group: performance-${{ github.ref }}
+  cancel-in-progress: true
+defaults:
+  run:
+    shell: bash
+jobs:
+  paired:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        trial: [1, 2, 3]
+    env:
+      BASELINE: ${{ inputs.baseline }}
+      DURATION: ${{ inputs.duration }}
+      CONNECTIONS: ${{ inputs.connections }}
+      TRIAL: ${{ matrix.trial }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build identical fixture against both daemon revisions
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          [[ "$BASELINE" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "$BASELINE^{commit}"
+          git worktree add --detach "$RUNNER_TEMP/baseline" "$BASELINE"
+          mkdir -p "$RUNNER_TEMP/baseline/integration/relayload"
+          cp integration/relayload/*.go "$RUNNER_TEMP/baseline/integration/relayload/"
+          (cd "$RUNNER_TEMP/baseline" && go build -trimpath -o "$RUNNER_TEMP/load-baseline" ./integration/relayload)
+          go build -trimpath -o "$RUNNER_TEMP/load-candidate" ./integration/relayload
+      - name: Compare and exercise failures on isolated processes
+        run: |
+          python3 scripts/relay_benchmark.py --baseline "$RUNNER_TEMP/load-baseline" --candidate "$RUNNER_TEMP/load-candidate" --connections "$CONNECTIONS" --duration "$DURATION" --trial "$TRIAL" --output "$RUNNER_TEMP/results"
+      - name: Record revisions
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/results"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path(os.environ["RUNNER_TEMP"], "results", "revisions.json").write_text(json.dumps({"baseline": os.environ["BASELINE"], "candidate": os.environ["GITHUB_SHA"]}, indent=2))
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: performance-trial-${{ matrix.trial }}
+          path: ${{ runner.temp }}/results
+          if-no-files-found: error
+          retention-days: 30
+  compare:
+    needs: paired
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: performance-trial-*
+          path: results
+      - run: python3 scripts/compare_relay_benchmarks.py results
+      - name: Publish comparison in job summary
+        if: always()
+        run: if test -f results/REPORT.md; then cat results/REPORT.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: performance-report
+          path: results/REPORT.md
+          if-no-files-found: ignore

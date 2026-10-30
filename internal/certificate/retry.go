@@ -44,8 +44,9 @@ func retryDelay(err error) time.Duration {
 	}
 	return 0
 }
-func (m *Renewer) checkRetry() error {
-	b, err := readFile(filepath.Join(m.cachePath, "retry.json"), 4096)
+func (m *Renewer) checkRetry() error { return m.checkRetryFile("retry.json") }
+func (m *Renewer) checkRetryFile(name string) error {
+	b, err := readFile(filepath.Join(m.cachePath, name), 4096)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -61,8 +62,9 @@ func (m *Renewer) checkRetry() error {
 	}
 	return nil
 }
-func (m *Renewer) rememberRetry(result error) error {
-	path := filepath.Join(m.cachePath, "retry.json")
+func (m *Renewer) rememberRetry(result error) error { return m.rememberRetryFile("retry.json", result) }
+func (m *Renewer) rememberRetryFile(name string, result error) error {
+	path := filepath.Join(m.cachePath, name)
 	if result == nil {
 		err := os.Remove(path)
 		if errors.Is(err, os.ErrNotExist) {

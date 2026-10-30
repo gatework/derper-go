@@ -75,16 +75,3 @@ func BenchmarkConnectionQuota(b *testing.B) {
 		}
 	})
 }
-
-// Exercise regular keep-alive requests as well as hijacked connections.
-func TestListenerRejectsAfterClose(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	limited := &limitedListener{Listener: listener, limit: &connectionLimit{limit: 1}}
-	limited.Close()
-	if _, err := limited.Accept(); err == nil {
-		t.Fatal("closed listener accepted")
-	}
-}

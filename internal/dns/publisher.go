@@ -18,6 +18,8 @@ import (
 	"github.com/gatework/derper-go/internal/state"
 )
 
+var ErrRecordConflict = errors.New("DNS record ownership conflict")
+
 type API interface {
 	CheckZone(context.Context, string) error
 	ListRecords(context.Context, string) ([]cloudflare.Record, error)
@@ -136,7 +138,7 @@ func (c *Publisher) plan(ctx context.Context, j journal) ([]Change, error) {
 			return nil, errors.New("DNS API returned an unexpected hostname")
 		}
 		if r.Type == "CNAME" || r.Type == "NS" {
-			return nil, fmt.Errorf("conflicting %s record", r.Type)
+			return nil, fmt.Errorf("%w: conflicting %s record", ErrRecordConflict, r.Type)
 		}
 		if r.Type != "A" && r.Type != "AAAA" {
 			continue
@@ -155,7 +157,7 @@ func (c *Publisher) plan(ctx context.Context, j journal) ([]Change, error) {
 		current, exists := byType[want.Type]
 		if !exists {
 			if _, owned := j.Records[want.Type]; owned {
-				return nil, fmt.Errorf("managed %s record was deleted externally", want.Type)
+				return nil, fmt.Errorf("%w: managed %s record was deleted externally", ErrRecordConflict, want.Type)
 			}
 			if p, ok := j.Pending[want.Type]; ok && time.Since(p.Since) < 2*time.Minute {
 				return nil, fmt.Errorf("%s creation outcome is pending; retry after two minutes", want.Type)
@@ -171,7 +173,7 @@ func (c *Publisher) plan(ctx context.Context, j journal) ([]Change, error) {
 			change.After = current
 		} else if owned {
 			if current.ID != previous.ID || !same(current, previous) {
-				return nil, fmt.Errorf("managed %s record changed externally; resolve the conflict before applying", want.Type)
+				return nil, fmt.Errorf("%w: managed %s record changed externally; resolve the conflict before applying", ErrRecordConflict, want.Type)
 			}
 			change.Action = "update"
 			if same(current, want) {

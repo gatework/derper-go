@@ -29,6 +29,9 @@ test "$(systemctl show derper-go.service -p Type --value)" = notify
 test "$(systemctl show derper-go.service -p ActiveState --value)" = active
 test "$(systemctl show derper-go.service -p User --value)" = derper-go
 test "$(stat -c '%a:%U' /var/lib/derper-go)" = 700:derper-go
+test "$(stat -c '%a:%U' /run/derper-go)" = 700:derper-go
+test -f /run/derper-go/status.json
+if systemctl show derper-go.service -p Environment --value | grep -q GOMEMLIMIT; then exit 1; fi
 test "$(stat -c '%a:%U:%G' /etc/derper-go/config.json)" = 640:root:derper-go
 test "$(stat -c '%a:%U:%G' /etc/derper-go/certificate.key)" = 640:root:derper-go
 jq -e '.port == 8443 and .certificate.file == "certificate.pem"' /etc/derper-go/config.json

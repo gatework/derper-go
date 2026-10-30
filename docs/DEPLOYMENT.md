@@ -70,3 +70,16 @@ Cloudflare Token 轮换时原子替换凭据文件。前台运行按请求重读
 7. 只有上述验证完成后才修改 Tailnet 发布配置或长期启用状态；保留恢复旧服务、旧 DNS 和旧策略的步骤。
 
 新程序不会停止旧服务、修改其文件或自动写入 Tailnet 策略。测试中所有安装与服务重启均在独立容器内完成。
+
+## 从 v0.1.0 升级
+
+本轮改进不自动升级运行中的服务。安排维护窗口后，先备份配置和整个状态目录，再使用经过 CI 的发行包替换程序；使用 `config check` 检查原有配置，`service render` 审阅新的单元，最后通过 `service restart` 更新单元并重启。
+
+- 原有最小配置仍可读取；新限额字段均有默认值。回退到 v0.1.0 前需删去其不认识的 `relay` 和 `tailscale.max_concurrent_checks`。
+- 不重新执行签发、创建身份或接管 DNS。`identity.json`、证书缓存、DNS 归属与安装日志保持兼容。旧版不会处理新的清理退避日志，遇到限流时优先修复或等待，不应立即回退重试。
+- systemd 新增 `RuntimeDirectory=derper-go`；状态移到 `/run/derper-go/status.json`，读取器仍兼容旧位置。服务停止后运行目录可被 systemd 清理；持久状态不受影响。
+- 新单元移除了固定 `GOMEMLIMIT=96MiB`。需要内存预算时，通过 `systemctl edit derper-go` 的 `[Service]` / `Environment=GOMEMLIMIT=256MiB` 设置，并根据连接规模与实际 GC 数据调整。该值只是示例，不能替代容量验证。
+- gz 的 `10-credentials.conf` 兼容覆盖文件与新单元中的无引号 `LoadCredential` 一致，可先保留。确认新单元已生效且凭据读取成功后再安排清理覆盖文件；不要删除 Token 或更改其权限。
+- 已批准、处于 `prepared` 的系统服务安装可通过再次执行 `init` 继续启动。`--no-start` / `--no-service` 仍保留其原有意图；恢复前核对配置与已批准安装一致。
+
+升级后核对身份、公钥、证书、DNS 归属和 Tailnet 区域保持一致，再从两台授权设备验证实际转发。gz 的固定 IPv4 和 sing-box 回包路由继续保留，不能改为通过代理出口自动发现地址。

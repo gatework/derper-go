@@ -21,6 +21,8 @@ import (
 	"golang.org/x/crypto/acme"
 )
 
+var ErrRecordConflict = errors.New("ACME TXT ownership conflict")
+
 func (m *Renewer) renew(parent context.Context) (result error) {
 	m.certificateMu.Lock()
 	defer m.certificateMu.Unlock()
@@ -183,17 +185,21 @@ func (m *Renewer) authorize(ctx context.Context, client *acme.Client, authURL st
 	return err
 }
 
-func (m *Renewer) cleanupPending(parent context.Context) error {
+func (m *Renewer) cleanupPending(parent context.Context) (result error) {
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	path := filepath.Join(m.cachePath, "pending-txt.json")
 	b, err := readFile(path, 64<<10)
 	if os.IsNotExist(err) {
-		return nil
+		return m.rememberRetryFile("cleanup-retry.json", nil)
 	}
 	if err != nil {
 		return err
 	}
+	if err := m.checkRetryFile("cleanup-retry.json"); err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, m.rememberRetryFile("cleanup-retry.json", result)) }()
 	var pending record
 	if err = json.Unmarshal(b, &pending); err != nil {
 		return fmt.Errorf("invalid ACME cleanup journal: %w", err)
@@ -220,7 +226,7 @@ func (m *Renewer) cleanupPending(parent context.Context) error {
 		// 只接受原始值或其精确编码，不剥除任意引号，避免删除已修改的内容。
 		contentMatches := r.Content == pending.Content || r.Content == strconv.Quote(pending.Content)
 		if r.Type != "TXT" || r.Name != pending.Name || !contentMatches || r.Comment != pending.Comment {
-			return fmt.Errorf("pending ACME TXT was modified externally; cleanup refused")
+			return fmt.Errorf("%w: pending ACME TXT was modified externally; cleanup refused", ErrRecordConflict)
 		}
 		if err = m.dns.DeleteRecord(ctx, r.ID); err != nil {
 			return err

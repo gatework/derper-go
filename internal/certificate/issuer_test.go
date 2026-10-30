@@ -39,6 +39,8 @@ type acmeFixture struct {
 	orders, deleted                          int
 	accepted, finalized, fail                bool
 	failDelete                               bool
+	deleteRetryAfter                         string
+	deleteAttempts                           int
 	expectedTXT                              string
 	certificate                              []byte
 	caKey                                    *ecdsa.PrivateKey
@@ -84,7 +86,11 @@ func (f *acmeFixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request
 		case r.URL.Path == "/client/v4/zones/0123456789abcdef0123456789abcdef":
 			send(map[string]any{"success": true, "result": map[string]string{"name": "example.com", "status": "active"}})
 		case r.Method == http.MethodDelete:
+			f.deleteAttempts++
 			if f.failDelete {
+				if f.deleteRetryAfter != "" {
+					w.Header().Set("Retry-After", f.deleteRetryAfter)
+				}
 				w.WriteHeader(http.StatusServiceUnavailable)
 				send(map[string]any{"success": false})
 				return
@@ -712,5 +718,32 @@ func TestValidCertificateSurvivesTXTCleanupFailure(t *testing.T) {
 	defer f.mu.Unlock()
 	if len(f.txt) != 0 || f.orders != 1 {
 		t.Fatalf("cleanup retried issuance: records=%d orders=%d", len(f.txt), f.orders)
+	}
+}
+
+func TestCleanupRetryWindowSurvivesRestart(t *testing.T) {
+	c := renewalOptions(t)
+	f := newACMEFixture(t, c.Domain)
+	f.failDelete, f.deleteRetryAfter = true, "120"
+	m := f.manager(t, c)
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	m.Close()
+	resumed := f.manager(t, c)
+	if err := resumed.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer resumed.Close()
+	resumed.certificateMu.Lock()
+	defer resumed.certificateMu.Unlock()
+	err := resumed.cleanupPending(context.Background())
+	if retryDelay(err) < time.Minute {
+		t.Fatal("cleanup ignored persisted Retry-After", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.deleteAttempts != 1 || f.orders != 1 {
+		t.Fatal("cleanup retried before provider deadline", f.deleteAttempts, f.orders)
 	}
 }
