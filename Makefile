@@ -1,6 +1,6 @@
 GO ?= go
 VERSION ?= dev
-COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+COMMIT ?= $(shell git rev-parse HEAD)
 LDFLAGS = -s -w -X github.com/gatework/derper-go/internal/cli.Version=$(VERSION) -X github.com/gatework/derper-go/internal/cli.Commit=$(COMMIT)
 
 .PHONY: build test race vet package
@@ -13,4 +13,4 @@ race:
 vet:
 	$(GO) vet ./...
 package:
-	VERSION=$(VERSION) COMMIT=$(COMMIT) sh scripts/package.sh
+	VERSION=$(VERSION) COMMIT=$(COMMIT) bash scripts/package.sh

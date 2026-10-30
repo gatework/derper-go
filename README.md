@@ -4,6 +4,12 @@
 
 支持 Linux amd64/arm64，需要 Go 1.27.3，当前依赖 Tailscale v1.104.4。
 
+## 获取发行版
+
+在 [Releases](https://github.com/gatework/derper-go/releases) 下载 Linux amd64 或 arm64 归档与 `checksums.txt`。校验、解压后即可运行包内的 `derper-go init`；归档包含配置示例、部署说明和依赖许可证。
+
+推送 `vMAJOR.MINOR.PATCH` 标签会自动完成 CI、构建、校验并发布 GitHub Release；`-rc.1` 等标签自动标记为预发布。详见 [自动发布与来源验证](docs/RELEASING.md)。
+
 ## 开始使用
 
 ```sh
@@ -105,7 +111,7 @@ go vet ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 ```
 
-CI 验证竞态、模块一致性、漏洞、amd64/arm64 构建和发行包；使用独立 systemd 容器验证实际安装、就绪、权限、重启和身份保留。本地测试使用回环假服务与临时密钥。
+CI 验证工作流、发布故障恢复、竞态、模块一致性、漏洞，以及 amd64/arm64 原生构建和运行；使用同一份发行包在独立 systemd 容器验证实际安装、就绪、权限、重启和身份保留。本地测试使用回环假服务与临时密钥。
 
 - [部署与 la3 迁移边界](docs/DEPLOYMENT.md)
 - [模块设计与审查改进](docs/DESIGN.md)
