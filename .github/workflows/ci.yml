@@ -26,9 +26,9 @@ jobs:
         run: |
           make build
           bin/derper-go version
-          bin/derper-go check -c examples/server.json
-          bin/derper-go export-derpmap -c examples/server.json
-          bin/derper-go service render -c examples/server.json --binary "$PWD/bin/derper-go" > "$RUNNER_TEMP/derper-go.service"
+          bin/derper-go config check -c examples/config.json
+          bin/derper-go tailnet config -c examples/config.json
+          bin/derper-go service render -c examples/config.json --binary "$PWD/bin/derper-go" > "$RUNNER_TEMP/derper-go.service"
           systemd-analyze verify --recursive-errors=no "$RUNNER_TEMP/derper-go.service"
   build:
     runs-on: ubuntu-latest
@@ -57,3 +57,34 @@ jobs:
             tar -tzf "derper-go_linux_$arch.tar.gz" > "$RUNNER_TEMP/contents-$arch.txt"
             test -s "derper-go_linux_$arch/licenses/tailscale.com-LICENSE"
           done
+
+  systemd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build isolated installation fixture
+        run: |
+          CGO_ENABLED=0 make build
+          docker build -t derper-go-systemd -f integration/Dockerfile .
+      - name: Exercise real systemd installation and restart
+        timeout-minutes: 5
+        run: |
+          docker run -d --name derper-go-systemd --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock --tmpfs /tmp derper-go-systemd
+          for attempt in $(seq 1 60); do
+            if docker exec derper-go-systemd systemctl show -p Version --value; then break; fi
+            sleep 1
+          done
+          docker exec -e DERPER_GO_SYSTEMD_TEST=1 derper-go-systemd /opt/systemd-test.sh
+      - name: Container diagnostics
+        if: failure()
+        run: |
+          docker logs derper-go-systemd || true
+          docker exec derper-go-systemd journalctl -u derper-go.service --no-pager || true
+          docker exec derper-go-systemd systemctl status derper-go.service --no-pager || true
+      - name: Clean up isolated container
+        if: always()
+        run: docker rm -f derper-go-systemd || true
