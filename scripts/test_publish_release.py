@@ -177,3 +177,29 @@ class PublishReleaseTest(unittest.TestCase):
         github = GitHub("gatework/derper-go")
         with patch.object(github, "api", side_effect=[{"object": {"type": "tag", "sha": "b" * 40}}, {"object": {"type": "commit", "sha": COMMIT}}]):
             self.assertEqual(github.tag_commit(VERSION), COMMIT)
+
+    def test_new_draft_visibility_delay_is_retried_without_recreating(self):
+        github = GitHub("gatework/derper-go")
+        release = {"id": 12, "tag_name": VERSION, "prerelease": False, "draft": True}
+        with patch.object(github, "command") as command, patch.object(github, "find_release", side_effect=[None, None, release]) as lookup, patch("publish_release.time.sleep") as sleep:
+            self.assertEqual(github.create_draft(VERSION, COMMIT, False, "notes"), release)
+            self.assertEqual(command.call_count, 1)
+            self.assertEqual(lookup.call_count, 3)
+            self.assertEqual(sleep.call_count, 2)
+
+    def test_new_draft_visibility_retry_is_bounded(self):
+        github = GitHub("gatework/derper-go")
+        with patch.object(github, "command") as command, patch.object(github, "find_release", return_value=None) as lookup, patch("publish_release.time.sleep") as sleep:
+            with self.assertRaisesRegex(ValueError, "not visible"):
+                github.create_draft(VERSION, COMMIT, False, "notes")
+            self.assertEqual(command.call_count, 1)
+            self.assertEqual(lookup.call_count, 8)
+            self.assertEqual(sleep.call_count, 7)
+
+    def test_new_draft_lookup_error_is_not_retried_as_absence(self):
+        github = GitHub("gatework/derper-go")
+        with patch.object(github, "command"), patch.object(github, "find_release", side_effect=subprocess.CalledProcessError(1, "gh", stderr="HTTP 403")) as lookup, patch("publish_release.time.sleep") as sleep:
+            with self.assertRaises(subprocess.CalledProcessError):
+                github.create_draft(VERSION, COMMIT, False, "notes")
+            self.assertEqual(lookup.call_count, 1)
+            sleep.assert_not_called()

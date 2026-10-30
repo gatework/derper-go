@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import time
 from urllib.parse import quote
 
 from release_assets import sha256, validate_commit, validate_version, write_checksums
@@ -73,7 +74,15 @@ class GitHub:
             if prerelease:
                 args.append("--prerelease")
             self.command(*args)
-        return self.find_release(tag)
+        # GitHub may acknowledge creation before its release list exposes the
+        # draft. Retry only this read-after-write absence, never an API error.
+        for attempt in range(8):
+            release = self.find_release(tag)
+            if release is not None:
+                return release
+            if attempt < 7:
+                time.sleep(min(0.5 * 2 ** attempt, 8))
+        raise ValueError("draft was created but is not visible yet; rerun to resume it")
 
     def assets(self, release):
         return self.paginated(f'/releases/{release["id"]}/assets')
