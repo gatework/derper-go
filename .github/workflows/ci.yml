@@ -50,7 +50,7 @@ jobs:
           git diff --exit-code -- go.mod go.sum
       - name: Validate workflows and release failure recovery
         run: |
-          bash -n scripts/package.sh integration/systemd.sh
+          bash -n scripts/package.sh integration/systemd.sh integration/credentials.sh
           python3 -m unittest discover -s scripts -p 'test_*.py' -v
           go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -color
       - run: go test -race -timeout 5m ./...
@@ -127,6 +127,8 @@ jobs:
           mkdir -p bin
           install -m 0755 "dist/derper-go_${BUILD_VERSION}_linux_amd64/derper-go" bin/derper-go
           docker build -t derper-go-systemd -f integration/Dockerfile .
+      - name: Verify root-only credentials with the runner's systemd
+        run: sudo env GITHUB_ACTIONS=true DERPER_GO_SYSTEMD_TEST=1 bash integration/credentials.sh "$PWD/bin/derper-go"
       - name: Exercise real systemd installation and restart
         timeout-minutes: 5
         run: |
@@ -140,9 +142,8 @@ jobs:
         if: failure()
         run: |
           docker logs derper-go-systemd || true
-          docker exec derper-go-systemd journalctl -u derper-go.service -u derper-go-credential-test.service --no-pager || true
+          docker exec derper-go-systemd journalctl -u derper-go.service --no-pager || true
           docker exec derper-go-systemd systemctl status derper-go.service --no-pager || true
-          docker exec derper-go-systemd systemctl cat derper-go-credential-test.service || true
       - name: Clean up isolated container
         if: always()
         run: docker rm -f derper-go-systemd || true

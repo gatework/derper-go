@@ -4,7 +4,7 @@ set -euo pipefail
 test "${DERPER_GO_SYSTEMD_TEST:-}" = 1
 test -f /opt/derper-go-isolated-test
 test -d /run/systemd/system
-trap 'systemctl stop derper-go.service derper-go-credential-test.service >/dev/null 2>&1 || true; kill "${occupant:-}" >/dev/null 2>&1 || true' EXIT
+trap 'systemctl stop derper-go.service >/dev/null 2>&1 || true; kill "${occupant:-}" >/dev/null 2>&1 || true' EXIT
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
   -keyout /opt/test.key -out /opt/test.pem -days 1 -subj /CN=relay.example.com \
   -addext subjectAltName=DNS:relay.example.com \
@@ -63,31 +63,4 @@ derper-go status --json | jq -e '.active == false and .ready == false'
 derper-go service start
 derper-go status --json | jq -e '.active and .ready'
 systemctl is-enabled --quiet derper-go.service
-# Exercise systemd's credential parser with the rendered unit. Syntax validation
-# alone accepts quoted LoadCredential values but then treats quotes literally.
-# A root-only fixture catches accidental dependence on the service being able
-# to read the source file. The program rejects whitespace in credential paths.
-printf 'test credential\n' > /opt/expected-credential
-chmod 0644 /opt/expected-credential
-install -m 0600 /opt/expected-credential /etc/derper-go/test-credentials.token
-cat > /opt/check-credential <<'SH'
-#!/bin/sh
-set -eu
-test -n "${CREDENTIALS_DIRECTORY:-}"
-exec /usr/bin/cmp "$CREDENTIALS_DIRECTORY/cloudflare-token" /opt/expected-credential
-SH
-chmod 0755 /opt/check-credential
-jq '.dns.publish = true | .cloudflare.token_file = "/etc/derper-go/test-credentials.token"' \
-  /etc/derper-go/config.json > /opt/credential-config.json
-derper-go service render -c /opt/credential-config.json |
-  sed -e 's/^Type=notify$/Type=oneshot/' \
-      -e 's#^ExecStart=.*#ExecStart=/opt/check-credential#' \
-      -e 's/^Restart=on-failure$/Restart=no/' \
-      > /etc/systemd/system/derper-go-credential-test.service
-grep -Fx 'LoadCredential=cloudflare-token:/etc/derper-go/test-credentials.token' \
-  /etc/systemd/system/derper-go-credential-test.service
-systemctl daemon-reload
-systemctl start derper-go-credential-test.service
-test "$(systemctl show derper-go-credential-test.service -p Result --value)" = success
-test "$(stat -c '%a:%U' /etc/derper-go/test-credentials.token)" = 600:root
-printf 'Isolated systemd installation, readiness, credentials, restart and identity checks passed.\n'
+printf 'Isolated systemd installation, readiness, restart and identity checks passed.\n'
