@@ -1,4 +1,4 @@
-package certmgr
+package certificate
 
 import (
 	"context"
@@ -293,7 +293,7 @@ func TestOfflineReadMatchesActiveCertificate(t *testing.T) {
 	}
 }
 
-func TestManagerStartIsSingleUse(t *testing.T) {
+func TestRenewerStartIsSingleUse(t *testing.T) {
 	for _, before := range []string{"close", "failure"} {
 		t.Run(before, func(t *testing.T) {
 			calls := 0
@@ -318,7 +318,7 @@ func TestManagerStartIsSingleUse(t *testing.T) {
 	}
 }
 
-func TestManagerCloseWaitsForStarting(t *testing.T) {
+func TestRenewerCloseWaitsForStarting(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	m, err := New(testConfig(t), nil, func(string) string { close(entered); <-release; return "" })
 	if err != nil {

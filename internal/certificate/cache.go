@@ -1,4 +1,4 @@
-package certmgr
+package certificate
 
 import (
 	"crypto/ecdsa"
@@ -16,9 +16,10 @@ import (
 	"time"
 
 	"github.com/gatework/derper-go/internal/fileio"
+	"github.com/gatework/derper-go/internal/state"
 )
 
-func (m *Manager) openCache() error {
+func (m *Renewer) openCache() error {
 	m.cachePath = cachePath(m.config)
 	if err := os.MkdirAll(m.cachePath, 0700); err != nil {
 		return err
@@ -38,39 +39,14 @@ func (m *Manager) openCache() error {
 	return nil
 }
 
-func cachePath(c Config) string {
+func cachePath(c Options) string {
 	sum := sha256.Sum256([]byte(c.DirectoryURL + "\n" + c.Domain))
 	return filepath.Join(c.CacheDir, hex.EncodeToString(sum[:]))
 }
 
-func atomicWrite(path string, data []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), ".acme-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	defer f.Close()
-	if _, err = f.Write(data); err != nil {
-		return err
-	}
-	if err = f.Sync(); err != nil {
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	if err = os.Rename(f.Name(), path); err != nil {
-		return err
-	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
-}
+func atomicWrite(path string, data []byte) error { return state.Write(path, data) }
 
-func (m *Manager) accountKey() (*ecdsa.PrivateKey, error) {
+func (m *Renewer) accountKey() (*ecdsa.PrivateKey, error) {
 	path := filepath.Join(m.cachePath, "account.pem")
 	b, err := readFile(path, 16<<10)
 	if err == nil {
@@ -101,7 +77,7 @@ func (m *Manager) accountKey() (*ecdsa.PrivateKey, error) {
 	return key, nil
 }
 
-func (m *Manager) parseCertificate(bundle []byte) (*tls.Certificate, error) {
+func (m *Store) parseCertificate(bundle []byte) (*tls.Certificate, error) {
 	pair, err := tls.X509KeyPair(bundle, bundle)
 	if err != nil {
 		return nil, fmt.Errorf("parse ACME certificate: %w", err)
@@ -110,7 +86,7 @@ func (m *Manager) parseCertificate(bundle []byte) (*tls.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = pair.Leaf.VerifyHostname(m.config.Domain); err != nil {
+	if err = pair.Leaf.VerifyHostname(m.domain); err != nil {
 		return nil, err
 	}
 	if pair.Leaf.IsCA {
@@ -130,7 +106,7 @@ func (m *Manager) parseCertificate(bundle []byte) (*tls.Certificate, error) {
 	return &pair, nil
 }
 
-func (m *Manager) loadCertificate() error {
+func (m *Store) loadCertificate() error {
 	b, err := readFile(filepath.Join(m.cachePath, "certificate.pem"), 1<<20)
 	if os.IsNotExist(err) {
 		return nil
@@ -146,7 +122,7 @@ func (m *Manager) loadCertificate() error {
 	return nil
 }
 
-func (m *Manager) install(bundle []byte) error {
+func (m *Store) install(bundle []byte) error {
 	pair, err := m.parseCertificate(bundle)
 	if err != nil {
 		return err
@@ -164,7 +140,7 @@ func (m *Manager) install(bundle []byte) error {
 }
 
 // ReadCachedCertificate reads an existing valid leaf without credentials, network or cache writes.
-func ReadCachedCertificate(c Config) ([]byte, error) {
+func ReadCachedCertificate(c Options) ([]byte, error) {
 	m, err := New(c, nil, nil)
 	if err != nil {
 		return nil, err

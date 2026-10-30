@@ -1,4 +1,4 @@
-package app
+package daemon
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/gatework/derper-go/internal/config"
-	"tailscale.com/client/local"
+	"github.com/gatework/derper-go/internal/tailnet"
 	"tailscale.com/net/stun"
 )
 
@@ -21,7 +21,7 @@ type CheckResult struct {
 }
 
 // Doctor only queries services. TLS/STUN reachability is not a claim of authorized DERP forwarding.
-func Doctor(ctx context.Context, c config.Config) []CheckResult {
+func Doctor(ctx context.Context, c config.Settings) []CheckResult {
 	var out []CheckResult
 	add := func(name, detail string, err error) {
 		if err != nil {
@@ -29,30 +29,29 @@ func Doctor(ctx context.Context, c config.Config) []CheckResult {
 		}
 		out = append(out, CheckResult{name, err == nil, detail})
 	}
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, c.Hostname)
-	add("dns", fmt.Sprint(ips), err)
-	_, port, _ := net.SplitHostPort(c.Listen)
-	d := tls.Dialer{NetDialer: &net.Dialer{Timeout: 5 * time.Second}, Config: &tls.Config{ServerName: c.Hostname, MinVersion: tls.VersionTLS12}}
-	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(c.Hostname, port))
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, c.Domain)
+	add("DNS", fmt.Sprint(ips), err)
+	port := strconv.Itoa(c.Port)
+	d := tls.Dialer{NetDialer: &net.Dialer{Timeout: 5 * time.Second}, Config: &tls.Config{ServerName: c.Domain, MinVersion: tls.VersionTLS12}}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(c.Domain, port))
 	detail := ""
 	if err == nil {
 		tlsConn := conn.(*tls.Conn)
 		detail = tlsConn.ConnectionState().PeerCertificates[0].NotAfter.UTC().Format(time.RFC3339)
 		conn.Close()
 	}
-	add("tls", detail, err)
-	if c.STUN.Enabled {
-		_, p, _ := net.SplitHostPort(c.STUN.Listen)
-		err = checkSTUN(ctx, net.JoinHostPort(c.Hostname, p))
-		add("stun", "valid binding response", err)
+	add("TLS", detail, err)
+	if c.STUNEnabled {
+		p := strconv.Itoa(c.STUNPort)
+		err = checkSTUN(ctx, net.JoinHostPort(c.Domain, p))
+		add("STUN", "STUN 地址绑定响应有效", err)
 	}
-	if c.Verification.Mode == "tailscaled" {
-		lc := &local.Client{Socket: c.Verification.Socket, UseSocketOnly: true}
-		status, err := lc.StatusWithoutPeers(ctx)
-		if err == nil && status.BackendState != "Running" {
-			err = fmt.Errorf("tailscaled state: %s", status.BackendState)
-		}
-		add("tailscaled", "running; verify actual forwarding from two authorized tailnet devices", err)
+	if c.Access == config.Tailnet {
+		verifier := tailnet.New(c.Socket)
+		err := verifier.Check(ctx)
+		verifier.Close()
+		add("Tailnet", "tailscaled 已就绪；实际转发需用两台已授权设备验证", err)
+
 	}
 	return out
 }

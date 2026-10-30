@@ -1,5 +1,5 @@
-// Package certmgr 管理服务端域名的 DNS 记录与 ACME 证书生命周期。
-package certmgr
+// Package certificate manages ACME renewal and atomic TLS snapshots.
+package certificate
 
 import (
 	"fmt"
@@ -14,26 +14,26 @@ import (
 	"golang.org/x/crypto/acme"
 )
 
-type CloudflareConfig struct {
-	ZoneID    string `json:"zone_id"`
-	TokenEnv  string `json:"token_env,omitempty"`
-	TokenFile string `json:"token_file,omitempty"`
+type CloudflareOptions struct {
+	ZoneID    string
+	TokenEnv  string
+	TokenFile string
 }
 
-type Config struct {
-	Domain             string           `json:"domain"`
-	Email              string           `json:"email"`
-	AcceptTerms        bool             `json:"accept_terms"`
-	DirectoryURL       string           `json:"directory_url,omitempty"`
-	CacheDir           string           `json:"cache_dir,omitempty"`
-	PropagationTimeout string           `json:"propagation_timeout,omitempty"`
-	Cloudflare         CloudflareConfig `json:"cloudflare"`
+type Options struct {
+	Domain             string
+	Email              string
+	AcceptTerms        bool
+	DirectoryURL       string
+	CacheDir           string
+	PropagationTimeout time.Duration
+	Cloudflare         CloudflareOptions
 }
 
 var domainLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 var zoneID = regexp.MustCompile(`^[a-fA-F0-9]{32}$`)
 
-func (c Config) normalized() Config {
+func (c Options) normalized() Options {
 	c.Domain = strings.ToLower(strings.TrimSuffix(c.Domain, "."))
 	if c.DirectoryURL == "" {
 		c.DirectoryURL = acme.LetsEncryptURL
@@ -41,8 +41,8 @@ func (c Config) normalized() Config {
 	if c.CacheDir == "" {
 		c.CacheDir = "acme"
 	}
-	if c.PropagationTimeout == "" {
-		c.PropagationTimeout = "2m"
+	if c.PropagationTimeout == 0 {
+		c.PropagationTimeout = 2 * time.Minute
 	}
 	if c.Cloudflare.TokenEnv == "" && c.Cloudflare.TokenFile == "" {
 		c.Cloudflare.TokenEnv = "CLOUDFLARE_API_TOKEN"
@@ -51,7 +51,7 @@ func (c Config) normalized() Config {
 }
 
 // ResolvePaths 在 CLI 加载配置时固定相对路径，包括默认缓存目录。
-func (c *Config) ResolvePaths(base string) {
+func (c *Options) ResolvePaths(base string) {
 	if c.CacheDir == "" {
 		c.CacheDir = "acme"
 	}
@@ -63,7 +63,7 @@ func (c *Config) ResolvePaths(base string) {
 }
 
 // Validate 只校验结构，不读取凭据、不发起网络请求或创建缓存。
-func (c Config) Validate() error {
+func (c Options) Validate() error {
 	c = c.normalized()
 	if len(c.Domain) > 253 || !strings.Contains(c.Domain, ".") {
 		return fmt.Errorf("acme.domain must be a fully qualified DNS name")
@@ -92,12 +92,10 @@ func (c Config) Validate() error {
 	if err = secureURL(c.DirectoryURL); err != nil {
 		return fmt.Errorf("acme.directory_url: %w", err)
 	}
-	for name, value := range map[string]string{"propagation_timeout": c.PropagationTimeout} {
-		d, err := time.ParseDuration(value)
-		if err != nil || d < time.Second || d > 24*time.Hour {
-			return fmt.Errorf("acme.%s must be between 1s and 24h", name)
-		}
+	if c.PropagationTimeout < time.Second || c.PropagationTimeout > 24*time.Hour {
+		return fmt.Errorf("证书传播等待时间应在 1 秒至 24 小时之间")
 	}
+
 	return nil
 }
 

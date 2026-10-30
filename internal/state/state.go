@@ -48,12 +48,21 @@ func (l *Lock) Close() error {
 }
 
 func Write(path string, data []byte) error {
+	return WriteFile(path, data, 0600, false)
+}
+
+// WriteFile publishes complete contents and permissions in one filesystem step.
+// Exclusive publication uses a hard link, so a concurrent creator is preserved.
+func WriteFile(path string, data []byte, mode os.FileMode, exclusive bool) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".derper-*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(f.Name())
 	defer f.Close()
+	if err := f.Chmod(mode); err != nil {
+		return err
+	}
 	if _, err := f.Write(data); err != nil {
 		return err
 	}
@@ -63,7 +72,12 @@ func Write(path string, data []byte) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(f.Name(), path); err != nil {
+	if exclusive {
+		err = os.Link(f.Name(), path)
+	} else {
+		err = os.Rename(f.Name(), path)
+	}
+	if err != nil {
 		return err
 	}
 	d, err := os.Open(filepath.Dir(path))
@@ -72,6 +86,25 @@ func Write(path string, data []byte) error {
 	}
 	defer d.Close()
 	return d.Sync()
+}
+
+// Store owns a deployment's writer lock until all workers have stopped.
+type Store struct {
+	dir  string
+	lock *Lock
+}
+
+func Open(dir string) (*Store, error) {
+	l, err := Acquire(dir)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{dir: dir, lock: l}, nil
+}
+func (s *Store) Close() error { return s.lock.Close() }
+func (s *Store) Dir() string  { return s.dir }
+func (s *Store) LoadOrCreateIdentity() (key.NodePrivate, error) {
+	return Identity(filepath.Join(s.dir, "identity.json"))
 }
 
 func WriteJSON(path string, value any) error {

@@ -174,7 +174,7 @@ func (c *Client) CheckZone(ctx context.Context, domain string) error {
 	return nil
 }
 
-func (c *Client) Records(ctx context.Context, name string) ([]Record, error) {
+func (c *Client) ListRecords(ctx context.Context, name string) ([]Record, error) {
 	var all []Record
 	for page := 1; page <= 100; page++ {
 		q := url.Values{"name": {name}, "page": {strconv.Itoa(page)}, "per_page": {"100"}}
@@ -194,7 +194,7 @@ func (c *Client) Records(ctx context.Context, name string) ([]Record, error) {
 	return nil, fmt.Errorf("cloudflare Record pagination exceeds 100 pages")
 }
 
-func (c *Client) Create(ctx context.Context, r Record) (string, error) {
+func (c *Client) CreateRecord(ctx context.Context, r Record) (string, error) {
 	res, err := c.request(ctx, http.MethodPost, c.path(), r)
 	if err != nil {
 		return "", err
@@ -209,7 +209,7 @@ func (c *Client) Create(ctx context.Context, r Record) (string, error) {
 	return created.ID, nil
 }
 
-func (c *Client) Delete(ctx context.Context, id string) error {
+func (c *Client) DeleteRecord(ctx context.Context, id string) error {
 	_, err := c.request(ctx, http.MethodDelete, c.path()+"/"+url.PathEscape(id), nil)
 	return err
 }
@@ -219,7 +219,7 @@ const BaseURL = "https://api.cloudflare.com/client/v4"
 // New constructs a client without network I/O. The HTTP client must have bounded timeouts.
 func New(token, zoneID string, httpClient *http.Client) *Client {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return fmt.Errorf("redirects are not allowed") }}
+		httpClient = HTTPClient()
 	}
 	return &Client{baseURL: BaseURL, token: token, zoneID: zoneID, http: httpClient}
 }
@@ -231,8 +231,16 @@ func NewSource(source func() (string, error), zoneID string, httpClient *http.Cl
 	return c
 }
 
-// Patch updates explicitly supplied fields, preserving unrelated record metadata.
-func (c *Client) Patch(ctx context.Context, id string, fields any) error {
+// UpdateRecord updates explicitly supplied fields, preserving unrelated record metadata.
+func (c *Client) UpdateRecord(ctx context.Context, id string, fields RecordUpdate) error {
 	_, err := c.request(ctx, http.MethodPatch, c.path()+"/"+url.PathEscape(id), fields)
 	return err
+}
+
+// RecordUpdate changes only address ownership fields, preserving unrelated metadata.
+type RecordUpdate struct {
+	Content string `json:"content"`
+	TTL     int    `json:"ttl"`
+	Proxied bool   `json:"proxied"`
+	Comment string `json:"comment"`
 }

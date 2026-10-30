@@ -1,39 +1,14 @@
-package certmgr
+package certificate
 
 import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/gatework/derper-go/internal/cloudflare"
 )
-
-func Token(c CloudflareConfig) (string, error) {
-	var value string
-	if c.TokenFile != "" {
-		b, err := readFile(c.TokenFile, 8<<10)
-		if err != nil {
-			return "", fmt.Errorf("read Cloudflare token: %w", err)
-		}
-		value = string(b)
-	} else {
-		name := c.TokenEnv
-		if name == "" {
-			name = "CLOUDFLARE_API_TOKEN"
-		}
-		value = os.Getenv(name)
-	}
-	value = strings.TrimSpace(value)
-	if value == "" || strings.ContainsAny(value, "\r\n\t ") {
-		return "", errors.New("Cloudflare API token is missing or invalid")
-	}
-	return value, nil
-}
 
 // Manual validates one complete snapshot. Subsequent calls do no filesystem I/O.
 func Manual(hostname, certPath, keyPath string) (func(*tls.ClientHelloInfo) (*tls.Certificate, error), error) {
@@ -45,7 +20,7 @@ func Manual(hostname, certPath, keyPath string) (func(*tls.ClientHelloInfo) (*tl
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{config: Config{Domain: hostname}}
+	m := &Store{domain: hostname}
 	pair, err := m.parseCertificate(append(append(cert, '\n'), key...))
 	if err != nil {
 		return nil, err
@@ -57,7 +32,7 @@ func Manual(hostname, certPath, keyPath string) (func(*tls.ClientHelloInfo) (*tl
 	return m.GetCertificate, nil
 }
 
-func Import(c Config, certPath, keyPath string) error {
+func Import(c Options, certPath, keyPath string) error {
 	m, err := New(c, nil, nil)
 	if err != nil {
 		return err
@@ -77,7 +52,7 @@ func Import(c Config, certPath, keyPath string) error {
 	return m.install(append(append(cert, '\n'), key...))
 }
 
-func Renew(ctx context.Context, c Config, force bool) error {
+func Renew(ctx context.Context, c Options, force bool) error {
 	m, err := New(c, nil, nil)
 	if err != nil {
 		return err
@@ -108,7 +83,7 @@ func CertificateStatus(c *x509.Certificate, domain string) Status {
 	now := time.Now()
 	return Status{domain, c.NotBefore, c.NotAfter, c.SerialNumber.String(), !now.Before(c.NotBefore) && now.Before(c.NotAfter)}
 }
-func CachedStatus(c Config) (Status, error) {
+func CachedStatus(c Options) (Status, error) {
 	// This read is independent of the writer lock and observes an atomic bundle.
 	m, err := New(c, nil, nil)
 	if err != nil {

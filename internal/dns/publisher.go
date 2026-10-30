@@ -6,13 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"math/rand/v2"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/gatework/derper-go/internal/cloudflare"
@@ -23,9 +20,9 @@ import (
 
 type API interface {
 	CheckZone(context.Context, string) error
-	Records(context.Context, string) ([]cloudflare.Record, error)
-	Create(context.Context, cloudflare.Record) (string, error)
-	Patch(context.Context, string, any) error
+	ListRecords(context.Context, string) ([]cloudflare.Record, error)
+	CreateRecord(context.Context, cloudflare.Record) (string, error)
+	UpdateRecord(context.Context, string, cloudflare.RecordUpdate) error
 }
 type pending struct {
 	Record cloudflare.Record `json:"record"`
@@ -41,15 +38,27 @@ type Change struct {
 	Before *cloudflare.Record `json:"before,omitempty"`
 	After  cloudflare.Record  `json:"after"`
 }
-type Controller struct {
-	Config config.Config
-	API    API
-	HTTP   *http.Client
+
+// Options holds DNS intent and its private journal location.
+type Options struct {
+	Domain, StateDir, IPv4, IPv6 string
+	Publish, AutoIPv4            bool
+	Approved                     []cloudflare.Record
+}
+type Publisher struct {
+	options  Options
+	api      API
+	discover func(context.Context) (string, error)
 }
 
-func (c *Controller) load() (journal, error) {
+func New(options Options, api API) *Publisher {
+	options.Approved = append([]cloudflare.Record(nil), options.Approved...)
+	return &Publisher{options: options, api: api, discover: DiscoverIPv4}
+}
+
+func (c *Publisher) load() (journal, error) {
 	j := journal{Records: map[string]cloudflare.Record{}, Pending: map[string]pending{}}
-	b, err := fileio.ReadRegularFile(filepath.Join(c.Config.StateDir, "dns.json"), 1<<20)
+	b, err := fileio.ReadRegularFile(filepath.Join(c.options.StateDir, "dns.json"), 1<<20)
 	if errors.Is(err, os.ErrNotExist) {
 		return j, nil
 	}
@@ -63,51 +72,40 @@ func (c *Controller) load() (journal, error) {
 		return j, errors.New("invalid DNS journal")
 	}
 	for typ, r := range j.Records {
-		if (typ != "A" && typ != "AAAA") || r.Type != typ || r.Name != c.Config.Hostname || r.ID == "" || r.Comment != marker(j.Owner, typ) {
+		if (typ != "A" && typ != "AAAA") || r.Type != typ || r.Name != c.options.Domain || r.ID == "" || r.Comment != marker(j.Owner, typ) {
 			return j, errors.New("DNS journal does not belong to this hostname")
 		}
 	}
 	for typ, p := range j.Pending {
-		if (typ != "A" && typ != "AAAA") || p.Record.Type != typ || p.Record.Name != c.Config.Hostname || p.Record.Comment != marker(j.Owner, typ) || p.Since.IsZero() {
+		if (typ != "A" && typ != "AAAA") || p.Record.Type != typ || p.Record.Name != c.options.Domain || p.Record.Comment != marker(j.Owner, typ) || p.Since.IsZero() {
 			return j, errors.New("invalid pending DNS operation")
 		}
 	}
 	return j, nil
 }
-func (c *Controller) save(j journal) error {
-	return state.WriteJSON(filepath.Join(c.Config.StateDir, "dns.json"), j)
+func (c *Publisher) save(j journal) error {
+	return state.WriteJSON(filepath.Join(c.options.StateDir, "dns.json"), j)
 }
 func marker(owner, typ string) string { return "derper-go:" + owner + ":" + typ }
 func same(a, b cloudflare.Record) bool {
 	return a.Type == b.Type && a.Name == b.Name && a.Content == b.Content && a.TTL == b.TTL && a.Proxied == b.Proxied && a.Comment == b.Comment
 }
 
-func (c *Controller) addresses(ctx context.Context) ([]cloudflare.Record, error) {
-	v4 := c.Config.DNS.IPv4
-	if c.Config.DNS.IPv4URL != "" {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Config.DNS.IPv4URL, nil)
+func (c *Publisher) addresses(ctx context.Context) ([]cloudflare.Record, error) {
+	v4 := c.options.IPv4
+	if c.options.AutoIPv4 {
+		var err error
+		v4, err = c.discover(ctx)
 		if err != nil {
 			return nil, err
 		}
-		res, err := c.HTTP.Do(req)
-		if err != nil {
-			return nil, errors.New("public IPv4 discovery failed")
-		}
-		defer res.Body.Close()
-		if res.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("public IPv4 discovery HTTP %d", res.StatusCode)
-		}
-		b, err := io.ReadAll(io.LimitReader(res.Body, 65))
-		if err != nil || len(b) > 64 {
-			return nil, errors.New("invalid IPv4 discovery response")
-		}
-		v4 = strings.TrimSpace(string(b))
 	}
+
 	var records []cloudflare.Record
 	for _, v := range []struct {
 		typ, ip string
 		v4      bool
-	}{{"A", v4, true}, {"AAAA", c.Config.DNS.IPv6, false}} {
+	}{{"A", v4, true}, {"AAAA", c.options.IPv6, false}} {
 		if v.ip == "" {
 			continue
 		}
@@ -115,26 +113,26 @@ func (c *Controller) addresses(ctx context.Context) ([]cloudflare.Record, error)
 		if err != nil {
 			return nil, err
 		}
-		records = append(records, cloudflare.Record{Type: v.typ, Name: c.Config.Hostname, Content: ip.String(), TTL: c.Config.DNS.TTL})
+		records = append(records, cloudflare.Record{Type: v.typ, Name: c.options.Domain, Content: ip.String(), TTL: 1})
 	}
 	return records, nil
 }
 
-func (c *Controller) plan(ctx context.Context, j journal) ([]Change, error) {
+func (c *Publisher) plan(ctx context.Context, j journal) ([]Change, error) {
 	desired, err := c.addresses(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err = c.API.CheckZone(ctx, c.Config.Hostname); err != nil {
+	if err = c.api.CheckZone(ctx, c.options.Domain); err != nil {
 		return nil, err
 	}
-	records, err := c.API.Records(ctx, c.Config.Hostname)
+	records, err := c.api.ListRecords(ctx, c.options.Domain)
 	if err != nil {
 		return nil, err
 	}
 	byType := map[string]cloudflare.Record{}
 	for _, r := range records {
-		if r.Name != c.Config.Hostname {
+		if r.Name != c.options.Domain {
 			return nil, errors.New("DNS API returned an unexpected hostname")
 		}
 		if r.Type == "CNAME" || r.Type == "NS" {
@@ -180,6 +178,9 @@ func (c *Controller) plan(ctx context.Context, j journal) ([]Change, error) {
 				change.Action = "noop"
 			}
 		} else {
+			if current.Comment != "" {
+				return nil, fmt.Errorf("%s 记录已有所有者标记，需要先人工解除归属", want.Type)
+			}
 			change.Action = "adopt"
 		}
 		changes = append(changes, change)
@@ -188,7 +189,7 @@ func (c *Controller) plan(ctx context.Context, j journal) ([]Change, error) {
 }
 
 // Plan performs no writes, including when the state directory does not exist yet.
-func (c *Controller) Plan(ctx context.Context) ([]Change, error) {
+func (c *Publisher) Plan(ctx context.Context) ([]Change, error) {
 	j, err := c.load()
 	if err != nil {
 		return nil, err
@@ -197,10 +198,10 @@ func (c *Controller) Plan(ctx context.Context) ([]Change, error) {
 }
 
 // Apply requires the caller to hold the process state lock. Adoption is restricted
-// to explicitly named records whose address/TTL/proxy settings already match.
-func (c *Controller) Apply(ctx context.Context, adoptIDs ...string) ([]Change, error) {
-	if c.Config.DNS.Mode != "manage" {
-		return nil, errors.New("dns apply requires dns.mode=manage")
+// to explicitly approved, unchanged record snapshots without an owner marker.
+func (c *Publisher) Apply(ctx context.Context, approved ...cloudflare.Record) ([]Change, error) {
+	if !c.options.Publish {
+		return nil, errors.New("DNS 发布已关闭")
 	}
 	j, err := c.load()
 	if err != nil {
@@ -220,19 +221,19 @@ func (c *Controller) Apply(ctx context.Context, adoptIDs ...string) ([]Change, e
 		return nil, err
 	}
 	// Check all adoptions before making the first remote change.
-	adoptSet := map[string]bool{}
-	for _, id := range adoptIDs {
-		if id != "" {
-			adoptSet[id] = true
-		}
+	approvedSet := map[string]cloudflare.Record{}
+	for _, r := range approved {
+		approvedSet[r.ID] = r
 	}
+
 	for _, ch := range changes {
 		if ch.Action == "adopt" {
 			before := *ch.Before
-			before.Comment = ch.After.Comment
-			if !adoptSet[ch.Before.ID] || !same(before, ch.After) {
-				return nil, fmt.Errorf("%s record %s is not owned; match its address/TTL/proxy and use --adopt-record-id", ch.After.Type, ch.Before.ID)
+			approved, ok := approvedSet[before.ID]
+			if !ok || !same(approved, before) || before.Comment != "" {
+				return nil, fmt.Errorf("%s 记录尚未批准接管或确认后已发生变化，请重新执行 dns plan", ch.After.Type)
 			}
+
 		}
 	}
 	for _, ch := range changes {
@@ -254,10 +255,10 @@ func (c *Controller) Apply(ctx context.Context, adoptIDs ...string) ([]Change, e
 		}
 		switch ch.Action {
 		case "create":
-			desired.ID, err = c.API.Create(ctx, desired)
+			desired.ID, err = c.api.CreateRecord(ctx, desired)
 		default:
 			desired.ID = ch.Before.ID
-			err = c.API.Patch(ctx, desired.ID, map[string]any{"content": desired.Content, "ttl": desired.TTL, "proxied": false, "comment": desired.Comment})
+			err = c.api.UpdateRecord(ctx, desired.ID, cloudflare.RecordUpdate{Content: desired.Content, TTL: desired.TTL, Proxied: false, Comment: desired.Comment})
 		}
 		if err != nil {
 			return changes, err
@@ -272,8 +273,8 @@ func (c *Controller) Apply(ctx context.Context, adoptIDs ...string) ([]Change, e
 }
 
 // Run maintains DNS without terminating an otherwise usable relay on API errors.
-func (c *Controller) Run(ctx context.Context, log *slog.Logger) {
-	interval := time.Duration(c.Config.DNS.Interval)
+func (c *Publisher) Run(ctx context.Context, log *slog.Logger, report func(error)) {
+	interval := 5 * time.Minute
 	retry := min(interval, 30*time.Second)
 	delay := time.Duration(0)
 	for {
@@ -286,23 +287,14 @@ func (c *Controller) Run(ctx context.Context, log *slog.Logger) {
 		}
 		attempt, cancel := context.WithTimeout(ctx, time.Minute)
 		var err error
-		if c.Config.DNS.Mode == "manage" {
-			_, err = c.Apply(attempt, "")
-		} else {
-			var changes []Change
-			changes, err = c.Plan(attempt)
-			if err == nil {
-				for _, ch := range changes {
-					if ch.Before == nil || ch.Before.Content != ch.After.Content || ch.Before.Proxied {
-						err = errors.New("observed DNS does not match configured addresses")
-						break
-					}
-				}
-			}
-		}
+		_, err = c.Apply(attempt, c.options.Approved...)
+
 		cancel()
 		if ctx.Err() != nil {
 			return
+		}
+		if report != nil {
+			report(err)
 		}
 		if err != nil {
 			log.Warn("DNS maintenance failed", "error", err)

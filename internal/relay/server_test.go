@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/gatework/derper-go/internal/config"
+	"github.com/gatework/derper-go/internal/tailnet"
 	"github.com/gatework/derper-go/internal/testutil"
 	"tailscale.com/derp"
 	"tailscale.com/derp/derphttp"
@@ -26,7 +26,7 @@ import (
 	"tailscale.com/types/key"
 )
 
-func start(t *testing.T, c config.Config, get CertificateSource) (*Server, context.CancelFunc, <-chan error) {
+func start(t *testing.T, c Options, get CertificateSource) (*Server, context.CancelFunc, <-chan error) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	s, err := Bind(ctx, c, key.NewNode(), get, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -39,13 +39,9 @@ func start(t *testing.T, c config.Config, get CertificateSource) (*Server, conte
 	t.Cleanup(func() { cancel(); s.Close() })
 	return s, cancel, done
 }
-func relayConfig() config.Config {
-	c := config.Default()
-	c.Hostname = "relay.example.com"
-	c.Listen = "127.0.0.1:0"
-	c.STUN.Listen = "127.0.0.1:0"
-	c.Verification.Mode = "none"
-	return c
+func relayConfig() Options {
+	return Options{Domain: "relay.example.com", Listen: "127.0.0.1:0", STUNListen: "127.0.0.1:0", STUNEnabled: true, HTTPPort: -1}
+
 }
 func client(t *testing.T, s *Server, k key.NodePrivate, cert testutil.Certificate) *derphttp.Client {
 	t.Helper()
@@ -180,9 +176,9 @@ func TestPrivateRelayRejectsUnknownAndUnavailableTailscaled(t *testing.T) {
 	go api.Serve(ln)
 	t.Cleanup(func() { api.Close() })
 	c := relayConfig()
-	c.Verification.Mode = "tailscaled"
-	c.Verification.Socket = socket
-	cert := testutil.Cert(t, c.Hostname, 1)
+	c.Verifier = tailnet.New(socket)
+	t.Cleanup(c.Verifier.(*tailnet.Verifier).Close)
+	cert := testutil.Cert(t, c.Domain, 1)
 	s, _, _ := start(t, c, func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return &cert.Pair, nil })
 	if _, err := receive(t, client(t, s, good, cert)); err != nil {
 		t.Fatal("authorized client rejected:", err)
@@ -202,7 +198,7 @@ func TestPrivateRelayRejectsUnknownAndUnavailableTailscaled(t *testing.T) {
 
 func TestSTUNTransactionAndAddress(t *testing.T) {
 	c := relayConfig()
-	cert := testutil.Cert(t, c.Hostname, 1)
+	cert := testutil.Cert(t, c.Domain, 1)
 	s, _, _ := start(t, c, func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return &cert.Pair, nil })
 	conn, err := net.Dial("udp", s.STUNAddr().String())
 	if err != nil {
@@ -245,9 +241,9 @@ func TestShutdownCancelsPendingClientVerification(t *testing.T) {
 	go api.Serve(ln)
 	t.Cleanup(func() { api.Close() })
 	c := relayConfig()
-	c.Verification.Mode = "tailscaled"
-	c.Verification.Socket = socket
-	cert := testutil.Cert(t, c.Hostname, 1)
+	c.Verifier = tailnet.New(socket)
+	t.Cleanup(c.Verifier.(*tailnet.Verifier).Close)
+	cert := testutil.Cert(t, c.Domain, 1)
 	s, cancel, done := start(t, c, func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return &cert.Pair, nil })
 	cc := client(t, s, key.NewNode(), cert)
 	clientDone := make(chan error, 1)
@@ -283,11 +279,11 @@ func TestShutdownCancelsPendingClientVerification(t *testing.T) {
 
 func TestWebSocketDERP(t *testing.T) {
 	c := relayConfig()
-	cert := testutil.Cert(t, c.Hostname, 1)
+	cert := testutil.Cert(t, c.Domain, 1)
 	s, _, _ := start(t, c, func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return &cert.Pair, nil })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: cert.Roots, ServerName: c.Hostname}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: cert.Roots, ServerName: c.Domain}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "tcp", s.Addr().String())
 	}}
 	defer transport.CloseIdleConnections()
@@ -321,7 +317,7 @@ func TestBindConflictReturnsError(t *testing.T) {
 	defer ln.Close()
 	c := relayConfig()
 	c.Listen = ln.Addr().String()
-	cert := testutil.Cert(t, c.Hostname, 1)
+	cert := testutil.Cert(t, c.Domain, 1)
 	if _, err = Bind(context.Background(), c, key.NewNode(), func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return &cert.Pair, nil }, slog.Default()); err == nil {
 		t.Fatal("occupied listener accepted")
 	}

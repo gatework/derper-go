@@ -1,4 +1,4 @@
-package certmgr
+package certificate
 
 import "github.com/gatework/derper-go/internal/cloudflare"
 

@@ -1,4 +1,4 @@
-package certmgr
+package certificate
 
 import (
 	"encoding/json"
@@ -44,7 +44,7 @@ func retryDelay(err error) time.Duration {
 	}
 	return 0
 }
-func (m *Manager) checkRetry() error {
+func (m *Renewer) checkRetry() error {
 	b, err := readFile(filepath.Join(m.cachePath, "retry.json"), 4096)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -61,7 +61,7 @@ func (m *Manager) checkRetry() error {
 	}
 	return nil
 }
-func (m *Manager) rememberRetry(result error) error {
+func (m *Renewer) rememberRetry(result error) error {
 	path := filepath.Join(m.cachePath, "retry.json")
 	if result == nil {
 		err := os.Remove(path)

@@ -1,15 +1,13 @@
-package certmgr
+package certificate
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -20,37 +18,38 @@ import (
 
 const certificateCheckInterval = time.Hour
 
-type managerState uint8
+type renewerState uint8
 
 const (
-	managerNew managerState = iota
-	managerStarting
-	managerRunning
-	managerClosed
+	renewerNew renewerState = iota
+	renewerStarting
+	renewerRunning
+	renewerClosed
 )
 
-// Manager 由启动它的服务独占。Start 只能调用一次，Close 取消并等待所有维护任务。
-type Manager struct {
+// Renewer 由启动它的服务独占。Start 只能调用一次，Close 取消并等待所有维护任务。
+type renewalFailure struct{ err error }
+
+type Renewer struct {
+	failure atomic.Pointer[renewalFailure]
+	*Store
 	certificateMu sync.Mutex
-	config        Config
+	config        Options
 	logger        *slog.Logger
 	getenv        func(string) string
 	http          *http.Client
 	dns           *cloudflare.Client
 	lookupTXT     func(context.Context, string) ([]string, error)
-	current       atomic.Pointer[tls.Certificate]
-	cachePath     string
-	lock          *os.File
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
 	closeOnce     sync.Once
 	lifecycleMu   sync.Mutex
-	state         managerState
+	state         renewerState
 	startDone     chan struct{}
 }
 
 // New 不进行 I/O，供 --check 与服务端配置校验复用。
-func New(c Config, logger *slog.Logger, getenv func(string) string) (*Manager, error) {
+func New(c Options, logger *slog.Logger, getenv func(string) string) (*Renewer, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -60,49 +59,35 @@ func New(c Config, logger *slog.Logger, getenv func(string) string) (*Manager, e
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return fmt.Errorf("redirects are not allowed") }}
-	return &Manager{config: c.normalized(), logger: logger, getenv: getenv, http: client, lookupTXT: net.DefaultResolver.LookupTXT}, nil
+	client := cloudflare.HTTPClient()
+	return &Renewer{Store: &Store{domain: c.normalized().Domain}, config: c.normalized(), logger: logger, getenv: getenv, http: client, lookupTXT: net.DefaultResolver.LookupTXT}, nil
 }
 
-func (m *Manager) token() (string, error) {
-	var value string
-	if m.config.Cloudflare.TokenFile != "" {
-		b, err := readFile(m.config.Cloudflare.TokenFile, 8<<10)
-		if err != nil {
-			return "", fmt.Errorf("read cloudflare token file: %w", err)
-		}
-		value = string(b)
-	} else {
-		value = m.getenv(m.config.Cloudflare.TokenEnv)
-	}
-	value = strings.TrimSpace(value)
-	if value == "" || strings.ContainsAny(value, "\r\n\t ") {
-		return "", fmt.Errorf("cloudflare API token is missing or invalid")
-	}
-	return value, nil
+func (m *Renewer) token() (string, error) {
+	return (cloudflare.Credentials{File: m.config.Cloudflare.TokenFile, Environment: m.config.Cloudflare.TokenEnv}).ReadEnv(m.getenv)
 }
 
-func (m *Manager) Start(parent context.Context) (err error) {
+func (m *Renewer) Start(parent context.Context) (err error) {
 	m.lifecycleMu.Lock()
-	if m.state != managerNew {
+	if m.state != renewerNew {
 		m.lifecycleMu.Unlock()
-		return fmt.Errorf("certificate manager Start requires a new instance")
+		return fmt.Errorf("证书续期器不能重复启动")
 	}
 	ctx, cancel := context.WithCancel(parent)
 	m.cancel = cancel
-	m.state = managerStarting
+	m.state = renewerStarting
 	m.startDone = make(chan struct{})
 	m.lifecycleMu.Unlock()
 	defer func() {
 		m.lifecycleMu.Lock()
-		if err == nil && m.state == managerClosed {
+		if err == nil && m.state == renewerClosed {
 			err = ctx.Err()
 		}
 		if err != nil {
-			m.state = managerClosed
+			m.state = renewerClosed
 			cancel()
 		} else {
-			m.state = managerRunning
+			m.state = renewerRunning
 		}
 		close(m.startDone)
 		m.lifecycleMu.Unlock()
@@ -133,7 +118,7 @@ func (m *Manager) Start(parent context.Context) (err error) {
 	return nil
 }
 
-func (m *Manager) maintainCertificate(ctx context.Context) error {
+func (m *Renewer) maintainCertificate(ctx context.Context) error {
 	if m.renewDue(time.Now()) {
 		return m.renew(ctx)
 	}
@@ -142,12 +127,12 @@ func (m *Manager) maintainCertificate(ctx context.Context) error {
 	return m.cleanupPending(ctx)
 }
 
-func (m *Manager) maintain(ctx context.Context, interval time.Duration, name string, action func(context.Context) error, initial bool) {
+func (m *Renewer) maintain(ctx context.Context, interval time.Duration, name string, action func(context.Context) error, initial bool) {
 	m.maintainScheduled(ctx, interval, name, action, initial, nil)
 }
 
 // next 在成功后重新读取当前状态，不能沿用签发前的证书期限。
-func (m *Manager) maintainScheduled(ctx context.Context, interval time.Duration, name string, action func(context.Context) error, initial bool, next func(time.Time) time.Duration) {
+func (m *Renewer) maintainScheduled(ctx context.Context, interval time.Duration, name string, action func(context.Context) error, initial bool, next func(time.Time) time.Duration) {
 	defer m.wg.Done()
 	// 维护成功按正常周期检查；短暂故障先快速恢复，再有界退避，避免等满一小时。
 	firstRetry := min(30*time.Second, max(time.Nanosecond, interval/10))
@@ -164,6 +149,11 @@ func (m *Manager) maintainScheduled(ctx context.Context, interval time.Duration,
 		}
 		dueBefore := next != nil && next(time.Now()) <= 0
 		err := action(ctx)
+		if err != nil {
+			m.failure.Store(&renewalFailure{err})
+		} else {
+			m.failure.Store(nil)
+		}
 		if ctx.Err() != nil {
 			return
 		}
@@ -186,12 +176,12 @@ func (m *Manager) maintainScheduled(ctx context.Context, interval time.Duration,
 	}
 }
 
-func (m *Manager) renewDue(now time.Time) bool {
+func (m *Renewer) renewDue(now time.Time) bool {
 	return m.certificateCheckDelay(now) == 0
 }
 
 // 正常检查不晚于续期点，最长一小时；已到期或尚未生效的证书立即处理。
-func (m *Manager) certificateCheckDelay(now time.Time) time.Duration {
+func (m *Renewer) certificateCheckDelay(now time.Time) time.Duration {
 	cert := m.current.Load()
 	if cert == nil || now.Before(cert.Leaf.NotBefore) {
 		return 0
@@ -202,7 +192,7 @@ func (m *Manager) certificateCheckDelay(now time.Time) time.Duration {
 }
 
 // 已到续期点的有效证书仍需留下下一次签发预算；过期或缺失时保留有界故障等待。
-func (m *Manager) certificateRetryDelay(now time.Time, limit time.Duration) time.Duration {
+func (m *Renewer) certificateRetryDelay(now time.Time, limit time.Duration) time.Duration {
 	cert := m.current.Load()
 	if cert != nil {
 		if remaining := cert.Leaf.NotAfter.Sub(now); remaining > 0 {
@@ -212,24 +202,9 @@ func (m *Manager) certificateRetryDelay(now time.Time, limit time.Duration) time
 	return limit
 }
 
-func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-	if hello != nil && hello.ServerName != "" && !strings.EqualFold(strings.TrimSuffix(hello.ServerName, "."), m.config.Domain) {
-		return nil, fmt.Errorf("unconfigured TLS server name")
-	}
-	cert := m.current.Load()
-	if cert == nil {
-		return nil, fmt.Errorf("ACME certificate is not ready")
-	}
-	now := time.Now()
-	if now.Before(cert.Leaf.NotBefore) || !now.Before(cert.Leaf.NotAfter) {
-		return nil, fmt.Errorf("ACME certificate is outside its validity period")
-	}
-	return cert, nil
-}
-
-func (m *Manager) Close() {
+func (m *Renewer) Close() {
 	m.lifecycleMu.Lock()
-	m.state = managerClosed
+	m.state = renewerClosed
 	if m.cancel != nil {
 		m.cancel()
 	}
@@ -256,4 +231,13 @@ func wait(ctx context.Context, d time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+// RenewalError reports the last maintenance failure without invalidating a
+// still-valid TLS snapshot. A later successful attempt clears it.
+func (m *Renewer) RenewalError() error {
+	if failure := m.failure.Load(); failure != nil {
+		return failure.err
+	}
+	return nil
 }

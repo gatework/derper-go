@@ -1,4 +1,4 @@
-package certmgr
+package certificate
 
 import (
 	"context"
@@ -21,7 +21,7 @@ import (
 	"golang.org/x/crypto/acme"
 )
 
-func (m *Manager) renew(parent context.Context) (result error) {
+func (m *Renewer) renew(parent context.Context) (result error) {
 	m.certificateMu.Lock()
 	defer m.certificateMu.Unlock()
 	if err := m.checkRetry(); err != nil {
@@ -60,7 +60,7 @@ func (m *Manager) renew(parent context.Context) (result error) {
 	return nil
 }
 
-func (m *Manager) issue(ctx context.Context, client *acme.Client) ([]byte, error) {
+func (m *Renewer) issue(ctx context.Context, client *acme.Client) ([]byte, error) {
 	order, err := client.AuthorizeOrder(ctx, acme.DomainIDs(m.config.Domain))
 	if err != nil {
 		return nil, fmt.Errorf("create ACME order: %w", err)
@@ -120,14 +120,14 @@ func (m *Manager) issue(ctx context.Context, client *acme.Client) ([]byte, error
 	return append(bundle, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private})...), nil
 }
 
-func (m *Manager) authorize(ctx context.Context, client *acme.Client, authURL string, challenge *acme.Challenge) (err error) {
+func (m *Renewer) authorize(ctx context.Context, client *acme.Client, authURL string, challenge *acme.Challenge) (err error) {
 	value, err := client.DNS01ChallengeRecord(challenge.Token)
 	if err != nil {
 		return err
 	}
 	name := "_acme-challenge." + m.config.Domain
 	// 不跟随 DNS CNAME 到其他区域，避免在未授权区域创建验证记录。
-	existing, err := m.dns.Records(ctx, name)
+	existing, err := m.dns.ListRecords(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -157,7 +157,7 @@ func (m *Manager) authorize(ctx context.Context, client *acme.Client, authURL st
 	// 日志保留 DNS 原始值兼容旧缓存；API 使用带引号的 TXT 表示。
 	published := pending
 	published.Content = strconv.Quote(value)
-	pending.ID, err = m.dns.Create(ctx, published)
+	pending.ID, err = m.dns.CreateRecord(ctx, published)
 	if err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func (m *Manager) authorize(ctx context.Context, client *acme.Client, authURL st
 	if err = atomicWrite(journal, data); err != nil {
 		return err
 	}
-	timeout, _ := time.ParseDuration(m.config.PropagationTimeout)
+	timeout := m.config.PropagationTimeout
 	propagation, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	for {
@@ -184,7 +184,7 @@ func (m *Manager) authorize(ctx context.Context, client *acme.Client, authURL st
 	return err
 }
 
-func (m *Manager) cleanupPending(parent context.Context) error {
+func (m *Renewer) cleanupPending(parent context.Context) error {
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	path := filepath.Join(m.cachePath, "pending-txt.json")
@@ -205,7 +205,7 @@ func (m *Manager) cleanupPending(parent context.Context) error {
 	if err = m.dns.CheckZone(ctx, m.config.Domain); err != nil {
 		return err
 	}
-	records, err := m.dns.Records(ctx, pending.Name)
+	records, err := m.dns.ListRecords(ctx, pending.Name)
 	if err != nil {
 		return err
 	}
@@ -223,7 +223,7 @@ func (m *Manager) cleanupPending(parent context.Context) error {
 		if r.Type != "TXT" || r.Name != pending.Name || !contentMatches || r.Comment != pending.Comment {
 			return fmt.Errorf("pending ACME TXT was modified externally; cleanup refused")
 		}
-		if err = m.dns.Delete(ctx, r.ID); err != nil {
+		if err = m.dns.DeleteRecord(ctx, r.ID); err != nil {
 			return err
 		}
 		found = true
@@ -241,7 +241,7 @@ func (m *Manager) cleanupPending(parent context.Context) error {
 	return os.Remove(path)
 }
 
-func (m *Manager) issuanceTimeout() time.Duration {
-	propagation, _ := time.ParseDuration(m.config.PropagationTimeout)
+func (m *Renewer) issuanceTimeout() time.Duration {
+	propagation := m.config.PropagationTimeout
 	return propagation + 10*time.Minute
 }

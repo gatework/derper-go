@@ -1,4 +1,4 @@
-package certmgr
+package certificate
 
 import (
 	"context"
@@ -252,7 +252,7 @@ func fixtureTXTValue(content string) string {
 	return content
 }
 
-func (f *acmeFixture) manager(t *testing.T, c Config) *Manager {
+func (f *acmeFixture) manager(t *testing.T, c Options) *Renewer {
 	t.Helper()
 	c.DirectoryURL = f.server.URL + "/directory"
 	m, err := New(c, nil, func(string) string { return "test-secret" })
@@ -530,7 +530,7 @@ func TestCachedStartDoesNotWaitForControlPlane(t *testing.T) {
 
 func TestIssuanceBudgetIncludesPropagation(t *testing.T) {
 	c := testConfig(t)
-	c.PropagationTimeout = "20m"
+	c.PropagationTimeout = 20 * time.Minute
 	m, _ := New(c, nil, nil)
 	if m.issuanceTimeout() < 20*time.Minute+time.Minute {
 		t.Fatal("issuance budget truncates configured DNS propagation")

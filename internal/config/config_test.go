@@ -1,15 +1,16 @@
 package config
 
 import (
-	"os"
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-const valid = `{"hostname":"Relay.Example.com.","tls":{"mode":"manual","certificate":"cert.pem","private_key":"key.pem"}}`
+const valid = `{"domain":"Relay.Example.com.","email":"ops@example.com"}`
 
 func TestStrictConfiguration(t *testing.T) {
-	for _, s := range []string{`null`, `[]`, `{} {}`, `{"hostname":"a.example","Hostname":"b.example"}`, `{"hostname":null}`, `{"hostname":"a.example","unknown":true}`, `{"hostname":"a.example","tls":{"mode":"manual","mode":"acme"}}`} {
+	for _, s := range []string{`null`, `[]`, `{} {}`, `{"domain":"a.example","Domain":"b.example"}`, `{"domain":null}`, `{"domain":"a.example","unknown":true}`, `{"domain":"a.example","certificate":{"ca":"staging","ca":"staging"}}`} {
 		if _, err := Decode([]byte(s)); err == nil {
 			t.Fatalf("accepted %s", s)
 		}
@@ -18,43 +19,57 @@ func TestStrictConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Hostname != "relay.example.com" || c.Verification.Mode != "tailscaled" || c.HTTPPort != -1 || c.DNS.Mode != "off" {
-		t.Fatal("unexpected defaults")
-	}
-}
-func TestPathsResolveAgainstConfig(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "server.json")
-	if err := os.WriteFile(path, []byte(valid), 0600); err != nil {
-		t.Fatal(err)
-	}
-	c, err := Load(path)
+	s, err := c.Resolve(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.TLS.Certificate != filepath.Join(dir, "cert.pem") {
-		t.Fatal("relative certificate path depends on working directory")
+	if s.Domain != "relay.example.com" || s.Access != Tailnet || s.Port != 443 || s.CaptivePortal || !s.PublishDNS || !s.AutoIPv4 || s.IPv6.IsValid() {
+		t.Fatalf("defaults: %+v", s)
+	}
+	b, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"domain":"relay.example.com","email":"ops@example.com"}` {
+		t.Fatalf("defaults leaked into intent: %s", b)
 	}
 }
-func TestRejectConflictingAndPrivateDNS(t *testing.T) {
-	for _, change := range []func(*Config){func(c *Config) { c.DNS.Mode = "manage" }, func(c *Config) { c.DNS.IPv4 = "127.0.0.1" }, func(c *Config) { c.DNS.IPv4 = "100.64.0.1" }, func(c *Config) { c.DNS.IPv6 = "::ffff:192.0.2.1" }, func(c *Config) { c.DNS.IPv4 = "192.0.2.1"; c.DNS.IPv4URL = "https://example.com" }, func(c *Config) { c.HTTPPort = 8443 }, func(c *Config) { c.Listen = ":https" }} {
-		c, err := Decode([]byte(valid))
-		if err != nil {
-			t.Fatal(err)
-		}
+func TestPathsAndOverrides(t *testing.T) {
+	c, err := Decode([]byte(`{"domain":"relay.example.com","port":8443,"access":"public","certificate":{"file":"cert.pem","key":"key.pem"},"dns":{"publish":false},"stun":{"enabled":false}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := t.TempDir()
+	s, err := c.Resolve(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.CertificateFile != filepath.Join(base, "cert.pem") || s.PublishDNS || s.STUNEnabled || s.Port != 8443 || s.Access != Public {
+		t.Fatalf("overrides: %+v", s)
+	}
+}
+func TestInvalidSettings(t *testing.T) {
+	for _, change := range []func(*Config){func(c *Config) { c.DNS.IPv4 = "127.0.0.1" }, func(c *Config) { c.DNS.IPv4 = "100.64.0.1" }, func(c *Config) { c.DNS.IPv6 = "::ffff:192.0.2.1" }, func(c *Config) { c.Region = 1 }, func(c *Config) { c.Port = -1 }, func(c *Config) { c.DNS.IPv4 = "off" }, func(c *Config) { c.Certificate.CA = "http://bad.example" }} {
+		c, _ := Decode([]byte(valid))
 		change(&c)
 		if c.Validate() == nil {
-			t.Fatal("invalid configuration accepted")
+			t.Fatal("accepted invalid settings")
 		}
+	}
+}
+func TestDefaultsNeverStoreSecrets(t *testing.T) {
+	c, _ := Decode([]byte(valid))
+	b, _ := json.Marshal(c)
+	if strings.Contains(string(b), "token") {
+		t.Fatal(string(b))
 	}
 }
 func FuzzDecode(f *testing.F) {
 	f.Add([]byte(valid))
-	f.Add([]byte(`{"hostname":null}`))
+	f.Add([]byte(`{"domain":null}`))
 	f.Fuzz(func(t *testing.T, b []byte) {
-		if len(b) > 1<<20 {
-			return
+		if len(b) <= 1<<20 {
+			_, _ = Decode(b)
 		}
-		_, _ = Decode(b)
 	})
 }

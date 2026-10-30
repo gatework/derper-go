@@ -12,32 +12,44 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gatework/derper-go/internal/config"
 	"tailscale.com/derp/derpserver"
 	"tailscale.com/net/stunserver"
 	"tailscale.com/types/key"
 )
 
 type CertificateSource func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+
+// Options describes relay listeners and admission, independent of user configuration.
+type Options struct {
+	Domain, Listen, STUNListen string
+	STUNEnabled                bool
+	HTTPPort                   int          // -1 disables the captive-portal probe listener.
+	Verifier                   NodeVerifier // nil explicitly permits public clients.
+}
+type NodeVerifier interface {
+	VerifyNode(context.Context, key.NodePublic) error
+}
+
 type Server struct {
-	core              *derpserver.Server
-	tlsServer         *http.Server
-	httpServer        *http.Server
-	tcp               net.Listener
-	httpListener      net.Listener
-	verifier          *http.Server
-	verifierListener  net.Listener
-	verifierTransport *http.Transport
-	stun              *stunserver.STUNServer
-	cancel            context.CancelFunc
-	closeOnce         sync.Once
-	closed            chan struct{}
+	ready chan struct{}
+
+	core             *derpserver.Server
+	tlsServer        *http.Server
+	httpServer       *http.Server
+	tcp              net.Listener
+	httpListener     net.Listener
+	verifier         *http.Server
+	verifierListener net.Listener
+	stun             *stunserver.STUNServer
+	cancel           context.CancelFunc
+	closeOnce        sync.Once
+	closed           chan struct{}
 }
 
 // Bind claims every enabled listener before certificate issuance or DNS writes.
-func Bind(parent context.Context, c config.Config, identity key.NodePrivate, certificate CertificateSource, logger *slog.Logger) (s *Server, err error) {
+func Bind(parent context.Context, c Options, identity key.NodePrivate, certificate CertificateSource, logger *slog.Logger) (s *Server, err error) {
 	ctx, cancel := context.WithCancel(parent)
-	s = &Server{cancel: cancel, closed: make(chan struct{})}
+	s = &Server{cancel: cancel, closed: make(chan struct{}), ready: make(chan struct{})}
 	defer func(bound *Server) {
 		if err != nil {
 			bound.Close()
@@ -46,8 +58,8 @@ func Bind(parent context.Context, c config.Config, identity key.NodePrivate, cer
 	logf := func(format string, args ...any) { logger.Debug(fmt.Sprintf(format, args...)) }
 	s.core = derpserver.New(identity, logf)
 	s.core.SetVerifyClientURLFailOpen(false)
-	if c.Verification.Mode == "tailscaled" {
-		if err = s.bindVerifier(ctx, c.Verification.Socket); err != nil {
+	if c.Verifier != nil {
+		if err = s.bindVerifier(ctx, c.Verifier); err != nil {
 			return nil, err
 		}
 	}
@@ -74,9 +86,9 @@ func Bind(parent context.Context, c config.Config, identity key.NodePrivate, cer
 	if err != nil {
 		return nil, err
 	}
-	if c.STUN.Enabled {
+	if c.STUNEnabled {
 		s.stun = stunserver.New(ctx)
-		if err = s.stun.Listen(c.STUN.Listen); err != nil {
+		if err = s.stun.Listen(c.STUNListen); err != nil {
 			return nil, err
 		}
 	}
@@ -110,7 +122,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		count++
 		go func() { results <- s.verifier.Serve(s.verifierListener) }()
 	}
-	go func() { results <- s.tlsServer.ServeTLS(s.tcp, "", "") }()
+	go func() { results <- s.tlsServer.ServeTLS(&readyListener{Listener: s.tcp, ready: s.ready}, "", "") }()
 	if s.stun != nil {
 		count++
 		go func() { results <- s.stun.Serve() }()
@@ -165,9 +177,6 @@ func (s *Server) Close() {
 		if s.verifier != nil {
 			_ = s.verifier.Close()
 		}
-		if s.verifierTransport != nil {
-			s.verifierTransport.CloseIdleConnections()
-		}
 		// net/http does not own hijacked DERP connections.
 		if s.core != nil {
 			_ = s.core.Close()
@@ -186,4 +195,18 @@ func (s *Server) Close() {
 		}
 		close(s.closed)
 	})
+}
+
+// Ready closes only after ServeTLS has entered its accept loop.
+func (s *Server) Ready() <-chan struct{} { return s.ready }
+
+type readyListener struct {
+	net.Listener
+	ready chan struct{}
+	once  sync.Once
+}
+
+func (l *readyListener) Accept() (net.Conn, error) {
+	l.once.Do(func() { close(l.ready) })
+	return l.Listener.Accept()
 }

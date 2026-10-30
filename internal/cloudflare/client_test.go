@@ -23,7 +23,7 @@ func TestErrorRedactionAndRetryAfter(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &Client{baseURL: srv.URL, token: "secret", zoneID: "zone", http: srv.Client()}
-	_, err := c.Records(context.Background(), "relay.example.com")
+	_, err := c.ListRecords(context.Background(), "relay.example.com")
 	var apiErr *Error
 	if !errors.As(err, &apiErr) || apiErr.Status != 429 || apiErr.RetryAfter != 2*time.Minute {
 		t.Fatalf("error=%v", err)
@@ -52,7 +52,7 @@ func TestPaginationAndZoneDiscovery(t *testing.T) {
 	if err := c.CheckZone(context.Background(), "relay.example.com"); err != nil {
 		t.Fatal(err)
 	}
-	records, err := c.Records(context.Background(), "relay.example.com")
+	records, err := c.ListRecords(context.Background(), "relay.example.com")
 	if err != nil || len(records) != 2 || queries.Load() != 2 {
 		t.Fatalf("records=%v calls=%v err=%v", records, queries.Load(), err)
 	}
@@ -68,16 +68,16 @@ func TestCredentialsRotateAndCanceledRequest(t *testing.T) {
 	defer srv.Close()
 	c := NewSource(func() (string, error) { return token, nil }, "zone", srv.Client())
 	c.baseURL = srv.URL
-	if _, err := c.Records(context.Background(), "relay.example.com"); err != nil {
+	if _, err := c.ListRecords(context.Background(), "relay.example.com"); err != nil {
 		t.Fatal(err)
 	}
 	token = "second"
-	if _, err := c.Records(context.Background(), "relay.example.com"); err != nil {
+	if _, err := c.ListRecords(context.Background(), "relay.example.com"); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := c.Records(ctx, "relay.example.com"); !errors.Is(err, context.Canceled) {
+	if _, err := c.ListRecords(ctx, "relay.example.com"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err=%v", err)
 	}
 	if len(got) != 2 || <-got != "Bearer first" || <-got != "Bearer second" {
@@ -89,7 +89,7 @@ func TestResponseSizeBound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, strings.Repeat("x", (1<<20)+1)) }))
 	defer srv.Close()
 	c := &Client{baseURL: srv.URL, http: srv.Client()}
-	if _, err := c.Records(context.Background(), "relay.example.com"); err == nil || !strings.Contains(err.Error(), "exceeds") {
+	if _, err := c.ListRecords(context.Background(), "relay.example.com"); err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("err=%v", err)
 	}
 }
