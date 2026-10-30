@@ -64,7 +64,7 @@ func (c Options) Validate() error {
 		return fmt.Errorf("cloudflare.zone must be a 32-character hexadecimal zone ID")
 	}
 	if c.Cloudflare.TokenEnv != "" && c.Cloudflare.TokenFile != "" {
-		return fmt.Errorf("Cloudflare 凭据文件与环境变量不能同时指定")
+		return fmt.Errorf("不能同时指定 Cloudflare 凭据文件与环境变量")
 	}
 	if err = secureURL(c.DirectoryURL); err != nil {
 		return fmt.Errorf("certificate.ca: %w", err)

@@ -48,7 +48,7 @@ jq -n --arg token "$work/cloudflare.token" \
       -e 's/^User=derper-go$/User=nobody/' \
       -e 's/^Group=derper-go$/Group=nogroup/' \
       -e "s/^StateDirectory=derper-go$/StateDirectory=$state_name/" \
-      -e "s/^RuntimeDirectory=derper-go$/RuntimeDirectory=$state_name/" \
+      -e "s/^RuntimeDirectory=derper-go$/RuntimeDirectory=$state_name-runtime/" \
       > "/run/systemd/system/$unit"
 grep -Fx "LoadCredential=cloudflare-token:$work/cloudflare.token" "/run/systemd/system/$unit"
 systemctl daemon-reload

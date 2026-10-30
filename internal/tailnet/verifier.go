@@ -23,8 +23,8 @@ const (
 )
 
 var (
-	ErrClosed         = errors.New("Tailnet 验证器已关闭")
-	ErrAdmissionLimit = errors.New("Tailnet 准入请求已达上限")
+	ErrClosed         = errors.New("已关闭 Tailnet 验证器")
+	ErrAdmissionLimit = errors.New("已达到 Tailnet 准入请求上限")
 	ErrUnauthorized   = errors.New("节点未获 Tailnet 授权")
 )
 
