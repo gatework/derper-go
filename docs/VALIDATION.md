@@ -23,6 +23,12 @@ CLI 校验和导出命令验证无网络/无状态写入；配置解码提供 fu
 
 在受限主机上可设置 GOMAXPROCS=2、go test -p 1 和磁盘 GOTMPDIR；竞态检测需要 CGO。所有测试数据与生产状态分离。
 
+## 依赖审查（2026-10-30）
+
+golang.org/x/net 升至 v0.62.0，修复 [GO-2026-6866](https://pkg.go.dev/vuln/GO-2026-6866) 与 [GO-2026-6860](https://pkg.go.dev/vuln/GO-2026-6860)。虽然本程序不使用受影响的 HTML 包，仍采用兼容的修复版本。
+
+模块级扫描会列出 [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932)：golang.org/x/crypto/openpgp 已弃用且没有修复版本。本程序依赖同模块的 ACME 等包，但构建依赖图不包含 OpenPGP；以 CI 的包级及符号可达性扫描作为交付结论。后续引入依赖时需重新检查。
+
 ## 部署验收
 
 模拟服务及回环测试不能替代真实公网和 tailnet 验收。正式迁移时至少核对：
