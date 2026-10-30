@@ -142,6 +142,7 @@ jobs:
           docker logs derper-go-systemd || true
           docker exec derper-go-systemd journalctl -u derper-go.service -u derper-go-credential-test.service --no-pager || true
           docker exec derper-go-systemd systemctl status derper-go.service --no-pager || true
+          docker exec derper-go-systemd systemctl cat derper-go-credential-test.service || true
       - name: Clean up isolated container
         if: always()
         run: docker rm -f derper-go-systemd || true

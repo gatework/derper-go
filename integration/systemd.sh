@@ -70,13 +70,22 @@ systemctl is-enabled --quiet derper-go.service
 printf 'test credential\n' > /opt/expected-credential
 chmod 0644 /opt/expected-credential
 install -m 0600 /opt/expected-credential /etc/derper-go/test-credentials.token
+cat > /opt/check-credential <<'SH'
+#!/bin/sh
+set -eu
+test -n "${CREDENTIALS_DIRECTORY:-}"
+exec /usr/bin/cmp "$CREDENTIALS_DIRECTORY/cloudflare-token" /opt/expected-credential
+SH
+chmod 0755 /opt/check-credential
 jq '.dns.publish = true | .cloudflare.token_file = "/etc/derper-go/test-credentials.token"' \
   /etc/derper-go/config.json > /opt/credential-config.json
 derper-go service render -c /opt/credential-config.json |
   sed -e 's/^Type=notify$/Type=oneshot/' \
-      -e 's#^ExecStart=.*#ExecStart=/usr/bin/cmp %d/cloudflare-token /opt/expected-credential#' \
+      -e 's#^ExecStart=.*#ExecStart=/opt/check-credential#' \
       -e 's/^Restart=on-failure$/Restart=no/' \
       > /etc/systemd/system/derper-go-credential-test.service
+grep -Fx 'LoadCredential=cloudflare-token:/etc/derper-go/test-credentials.token' \
+  /etc/systemd/system/derper-go-credential-test.service
 systemctl daemon-reload
 systemctl start derper-go-credential-test.service
 test "$(systemctl show derper-go-credential-test.service -p Result --value)" = success
