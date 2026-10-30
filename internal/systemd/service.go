@@ -46,7 +46,12 @@ func Render(binary, path string, s config.Settings) (string, error) {
 		if _, err := unitPath(s.TokenFile); err != nil {
 			return "", err
 		}
-		credential = "LoadCredential=" + strconv.Quote("cloudflare-token:"+s.TokenFile) + "\n"
+		if strings.TrimSpace(s.TokenFile) != s.TokenFile {
+			return "", errors.New("systemd 凭据路径不能以空白字符结尾")
+		}
+		// LoadCredential splits on the first colon without unquoting either
+		// field. The source path, including interior spaces, must stay literal.
+		credential = "LoadCredential=cloudflare-token:" + s.TokenFile + "\n"
 	}
 	capabilities := "CapabilityBoundingSet=\n"
 	if s.Port < 1024 || s.CaptivePortal || (s.STUNEnabled && s.STUNPort < 1024) {
