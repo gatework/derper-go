@@ -19,16 +19,18 @@ import (
 )
 
 const (
-	DefaultPath       = "/etc/derper-go/config.json"
-	DefaultDataDir    = "/var/lib/derper-go"
-	DefaultRuntimeDir = "/run/derper-go"
-	DefaultPort       = 443
-	AlternatePort     = 8443
-	DefaultSTUNPort   = 3478
-	DefaultRegion     = 900
-	DefaultSocket     = "/run/tailscale/tailscaled.sock"
-	ProductionCA      = "https://acme-v02.api.letsencrypt.org/directory"
-	StagingCA         = "https://acme-staging-v02.api.letsencrypt.org/directory"
+	DefaultPath                = "/etc/derper-go/config.json"
+	DefaultDataDir             = "/var/lib/derper-go"
+	DefaultRuntimeDir          = "/run/derper-go"
+	DefaultMaxConnections      = 2048
+	DefaultMaxConcurrentChecks = 32
+	DefaultPort                = 443
+	AlternatePort              = 8443
+	DefaultSTUNPort            = 3478
+	DefaultRegion              = 900
+	DefaultSocket              = "/run/tailscale/tailscaled.sock"
+	ProductionCA               = "https://acme-v02.api.letsencrypt.org/directory"
+	StagingCA                  = "https://acme-staging-v02.api.letsencrypt.org/directory"
 )
 
 type Access string
@@ -47,6 +49,7 @@ type Config struct {
 	Access        Access      `json:"access,omitempty"`
 	Certificate   Certificate `json:"certificate,omitzero"`
 	DNS           DNS         `json:"dns,omitzero"`
+	Relay         Relay       `json:"relay,omitzero"`
 	Tailscale     Tailscale   `json:"tailscale,omitzero"`
 	Cloudflare    Cloudflare  `json:"cloudflare,omitzero"`
 	STUN          STUN        `json:"stun,omitzero"`
@@ -63,8 +66,12 @@ type DNS struct {
 	IPv4    string `json:"ipv4,omitempty"`
 	IPv6    string `json:"ipv6,omitempty"`
 }
+type Relay struct {
+	MaxConnections int `json:"max_connections,omitempty"`
+}
 type Tailscale struct {
-	Socket string `json:"socket,omitempty"`
+	Socket              string `json:"socket,omitempty"`
+	MaxConcurrentChecks int    `json:"max_concurrent_checks,omitempty"`
 }
 type Cloudflare struct {
 	Zone      string `json:"zone,omitempty"`
@@ -77,6 +84,7 @@ type STUN struct {
 
 // Settings is a resolved value passed only to the composition layer.
 type Settings struct {
+	MaxConnections, MaxConcurrentChecks                                      int
 	Domain, Email                                                            string
 	Port, Region, STUNPort                                                   int
 	Access                                                                   Access
@@ -142,6 +150,19 @@ func ValidateDomain(domain string) error {
 func (c Config) Validate() error { _, err := c.Resolve("."); return err }
 func (c Config) Resolve(base string) (Settings, error) {
 	s := Settings{Domain: strings.ToLower(strings.TrimSuffix(c.Domain, ".")), Email: c.Email, Port: c.Port, Region: c.Region, Access: c.Access, STUNPort: c.STUN.Port, STUNEnabled: true, PublishDNS: true, CaptivePortal: c.CaptivePortal, CA: c.Certificate.CA, Socket: c.Tailscale.Socket, ZoneID: c.Cloudflare.Zone, LogLevel: c.LogLevel}
+	s.MaxConnections, s.MaxConcurrentChecks = c.Relay.MaxConnections, c.Tailscale.MaxConcurrentChecks
+	if s.MaxConnections == 0 {
+		s.MaxConnections = DefaultMaxConnections
+	}
+	if s.MaxConcurrentChecks == 0 {
+		s.MaxConcurrentChecks = DefaultMaxConcurrentChecks
+	}
+	if s.MaxConnections < 1 || s.MaxConnections > 60000 {
+		return s, invalid("relay.max_connections", "连接上限应为 1–60000")
+	}
+	if s.MaxConcurrentChecks < 1 || s.MaxConcurrentChecks > 128 {
+		return s, invalid("tailscale.max_concurrent_checks", "并行验证上限应为 1–128")
+	}
 	if err := ValidateDomain(s.Domain); err != nil {
 		return s, err
 	}

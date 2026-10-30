@@ -23,7 +23,7 @@ func TestStrictConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Domain != "relay.example.com" || s.Access != Tailnet || s.Port != 443 || s.CaptivePortal || !s.PublishDNS || !s.AutoIPv4 || s.IPv6.IsValid() {
+	if s.MaxConnections != 2048 || s.MaxConcurrentChecks != 32 || s.Domain != "relay.example.com" || s.Access != Tailnet || s.Port != 443 || s.CaptivePortal || !s.PublishDNS || !s.AutoIPv4 || s.IPv6.IsValid() {
 		t.Fatalf("defaults: %+v", s)
 	}
 	b, err := json.Marshal(c)
@@ -72,4 +72,16 @@ func FuzzDecode(f *testing.F) {
 			_, _ = Decode(b)
 		}
 	})
+}
+
+func TestResourceLimits(t *testing.T) {
+	for _, raw := range []string{
+		`{"domain":"relay.example.com","email":"ops@example.com","relay":{"max_connections":-1}}`,
+		`{"domain":"relay.example.com","email":"ops@example.com","relay":{"max_connections":60001}}`,
+		`{"domain":"relay.example.com","email":"ops@example.com","tailscale":{"max_concurrent_checks":129}}`,
+	} {
+		if _, err := Decode([]byte(raw)); err == nil {
+			t.Fatal("unbounded setting", raw)
+		}
+	}
 }

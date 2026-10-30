@@ -34,7 +34,7 @@ func TestRegionDiscoveryAndLoginCheck(t *testing.T) {
 	})}
 	go server.Serve(ln)
 	defer server.Close()
-	verifier := New(socket)
+	verifier := New(Options{Socket: socket})
 	defer verifier.Close()
 	if err = verifier.Check(context.Background()); err != nil {
 		t.Fatal(err)

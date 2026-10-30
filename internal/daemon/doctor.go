@@ -61,7 +61,7 @@ func Doctor(ctx context.Context, c config.Settings) []CheckResult {
 		add("STUN", "STUN 地址绑定响应有效", err)
 	}
 	if c.Access == config.Tailnet {
-		verifier := tailnet.New(c.Socket)
+		verifier := tailnet.New(tailnet.Options{Socket: c.Socket, MaxConcurrentChecks: c.MaxConcurrentChecks})
 		err := verifier.Check(ctx)
 		verifier.Close()
 		add("Tailnet", "tailscaled 已就绪；实际转发需用两台已授权设备验证", err)

@@ -23,6 +23,7 @@ type CertificateSource func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 type Options struct {
 	Domain, Listen, STUNListen string
 	STUNEnabled                bool
+	MaxConnections             int
 	HTTPPort                   int          // -1 disables the captive-portal probe listener.
 	Verifier                   NodeVerifier // nil explicitly permits public clients.
 }
@@ -31,7 +32,8 @@ type NodeVerifier interface {
 }
 
 type Server struct {
-	ready chan struct{}
+	ready       chan struct{}
+	connections *connectionLimit
 
 	core             *derpserver.Server
 	tlsServer        *http.Server
@@ -49,13 +51,21 @@ type Server struct {
 // Bind claims every enabled listener before certificate issuance or DNS writes.
 func Bind(parent context.Context, c Options, identity key.NodePrivate, certificate CertificateSource, logger *slog.Logger) (s *Server, err error) {
 	ctx, cancel := context.WithCancel(parent)
-	s = &Server{cancel: cancel, closed: make(chan struct{}), ready: make(chan struct{})}
+	limit := c.MaxConnections
+	if limit <= 0 {
+		limit = DefaultMaxConnections
+	}
+	s = &Server{connections: &connectionLimit{limit: int64(limit)}, cancel: cancel, closed: make(chan struct{}), ready: make(chan struct{})}
 	defer func(bound *Server) {
 		if err != nil {
 			bound.Close()
 		}
 	}(s)
-	logf := func(format string, args ...any) { logger.Debug(fmt.Sprintf(format, args...)) }
+	logf := func(format string, args ...any) {
+		if logger.Enabled(ctx, slog.LevelDebug) {
+			logger.DebugContext(ctx, fmt.Sprintf(format, args...))
+		}
+	}
 	s.core = derpserver.New(identity, logf)
 	s.core.SetVerifyClientURLFailOpen(false)
 	if c.Verifier != nil {
@@ -80,12 +90,13 @@ func Bind(parent context.Context, c Options, identity key.NodePrivate, certifica
 	s.core.ModifyTLSConfigToAddMetaCert(tlsConfig)
 	protocols := new(http.Protocols)
 	protocols.SetHTTP1(true)
-	s.tlsServer = &http.Server{Handler: mux, TLSConfig: tlsConfig, Protocols: protocols, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute, ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelDebug)}
+	s.tlsServer = &http.Server{Handler: mux, TLSConfig: tlsConfig, Protocols: protocols, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return ctx }, ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelDebug)}
 	lc := net.ListenConfig{KeepAlive: 10 * time.Minute}
 	s.tcp, err = lc.Listen(ctx, "tcp", c.Listen)
 	if err != nil {
 		return nil, err
 	}
+	s.tcp = &limitedListener{Listener: s.tcp, limit: s.connections}
 	if c.STUNEnabled {
 		s.stun = stunserver.New(ctx)
 		if err = s.stun.Listen(c.STUNListen); err != nil {
@@ -98,12 +109,15 @@ func Bind(parent context.Context, c Options, identity key.NodePrivate, certifica
 		if err != nil {
 			return nil, err
 		}
+		s.httpListener = &limitedListener{Listener: s.httpListener, limit: s.connections}
 		httpMux := http.NewServeMux()
 		httpMux.HandleFunc("/generate_204", derpserver.ServeNoContent)
-		s.httpServer = &http.Server{Handler: httpMux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second}
+		s.httpServer = &http.Server{Handler: httpMux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return ctx }}
 	}
 	return s, nil
 }
+
+func (s *Server) Connections() ConnectionStats { return s.connections.stats() }
 
 func (s *Server) Addr() net.Addr { return s.tcp.Addr() }
 func (s *Server) STUNAddr() net.Addr {

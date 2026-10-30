@@ -20,7 +20,7 @@ func (s *Server) bindVerifier(ctx context.Context, verifier NodeVerifier) error 
 		return err
 	}
 	s.verifierListener = ln
-	s.verifier = &http.Server{ReadHeaderTimeout: time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: time.Minute, BaseContext: func(net.Listener) context.Context { return ctx }, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.verifier = &http.Server{MaxHeaderBytes: 4096, ReadHeaderTimeout: time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: time.Minute, BaseContext: func(net.Listener) context.Context { return ctx }, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/verify" {
 			http.NotFound(w, r)
 			return

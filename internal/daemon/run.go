@@ -71,7 +71,7 @@ func Run(parent context.Context, s config.Settings, dir string, logger *slog.Log
 	defer func() { health.stop(err) }()
 	var verifier *tailnet.Verifier
 	if s.Access == config.Tailnet {
-		verifier = tailnet.New(s.Socket)
+		verifier = tailnet.New(tailnet.Options{Socket: s.Socket, MaxConcurrentChecks: s.MaxConcurrentChecks})
 		defer verifier.Close()
 	}
 	var renewer *certificate.Renewer
@@ -89,7 +89,7 @@ func Run(parent context.Context, s config.Settings, dir string, logger *slog.Log
 			return err
 		}
 	}
-	opts := relay.Options{Domain: s.Domain, Listen: net.JoinHostPort("", strconv.Itoa(s.Port)), STUNEnabled: s.STUNEnabled, STUNListen: net.JoinHostPort("", strconv.Itoa(s.STUNPort)), HTTPPort: -1}
+	opts := relay.Options{MaxConnections: s.MaxConnections, Domain: s.Domain, Listen: net.JoinHostPort("", strconv.Itoa(s.Port)), STUNEnabled: s.STUNEnabled, STUNListen: net.JoinHostPort("", strconv.Itoa(s.STUNPort)), HTTPPort: -1}
 	if verifier != nil {
 		opts.Verifier = verifier
 	}
@@ -101,6 +101,7 @@ func Run(parent context.Context, s config.Settings, dir string, logger *slog.Log
 		return err
 	}
 	defer server.Close()
+	health.watch(server, verifier)
 	if renewer != nil {
 		if err = renewer.Start(ctx); err != nil {
 			return err

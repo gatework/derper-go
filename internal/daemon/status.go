@@ -26,18 +26,20 @@ type Component struct {
 	Detail string `json:"detail,omitempty"`
 }
 type Status struct {
-	Domain      string    `json:"domain"`
-	Phase       string    `json:"phase"`
-	Cleanup     Component `json:"certificate_cleanup"`
-	PID         int       `json:"pid"`
-	Process     string    `json:"process"`
-	Active      bool      `json:"active"`
-	Ready       bool      `json:"ready"`
-	Updated     time.Time `json:"updated"`
-	Certificate Component `json:"certificate"`
-	DNS         Component `json:"dns"`
-	Tailnet     Component `json:"tailnet"`
-	Error       string    `json:"error,omitempty"`
+	Connections relay.ConnectionStats  `json:"connections"`
+	Admission   tailnet.AdmissionStats `json:"admission"`
+	Domain      string                 `json:"domain"`
+	Phase       string                 `json:"phase"`
+	Cleanup     Component              `json:"certificate_cleanup"`
+	PID         int                    `json:"pid"`
+	Process     string                 `json:"process"`
+	Active      bool                   `json:"active"`
+	Ready       bool                   `json:"ready"`
+	Updated     time.Time              `json:"updated"`
+	Certificate Component              `json:"certificate"`
+	DNS         Component              `json:"dns"`
+	Tailnet     Component              `json:"tailnet"`
+	Error       string                 `json:"error,omitempty"`
 }
 
 func processIdentity(pid int) (string, error) {
@@ -99,15 +101,17 @@ func statusPath(dir string) string {
 }
 
 type health struct {
-	logger   *slog.Logger
-	mu       sync.Mutex
-	path     string
-	status   Status
-	dirty    chan struct{}
-	quit     chan struct{}
-	done     chan struct{}
-	stopOnce sync.Once
-	write    func(string, any) error
+	connections func() relay.ConnectionStats
+	admission   func() tailnet.AdmissionStats
+	logger      *slog.Logger
+	mu          sync.Mutex
+	path        string
+	status      Status
+	dirty       chan struct{}
+	quit        chan struct{}
+	done        chan struct{}
+	stopOnce    sync.Once
+	write       func(string, any) error
 }
 
 func newHealth(dir, domain string, logger *slog.Logger) (*health, error) {
@@ -133,7 +137,14 @@ func newHealth(dir, domain string, logger *slog.Logger) (*health, error) {
 func (h *health) snapshot() Status {
 	h.mu.Lock()
 	s := h.status
+	connections, admission := h.connections, h.admission
 	h.mu.Unlock()
+	if connections != nil {
+		s.Connections = connections()
+	}
+	if admission != nil {
+		s.Admission = admission()
+	}
 	s.Updated = time.Now().UTC()
 	switch {
 	case !s.Active:
@@ -254,4 +265,14 @@ func (h *health) monitor(ctx context.Context, get relay.CertificateSource, verif
 		case <-ticker.C:
 		}
 	}
+}
+
+func (h *health) watch(server *relay.Server, verifier *tailnet.Verifier) {
+	h.mu.Lock()
+	h.connections = server.Connections
+	if verifier != nil {
+		h.admission = verifier.Stats
+	}
+	h.mu.Unlock()
+	h.changed()
 }

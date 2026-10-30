@@ -64,7 +64,7 @@ func New() *Workflow {
 	return &Workflow{checkHost: systemd.Check, checkTailnet: inspectTailnet, portAvailable: portAvailable, stunAvailable: stunAvailable, discoverIPv4: dns.DiscoverIPv4, dnsPlan: inspectDNS, terms: discoverTerms, install: systemd.Install, start: func(ctx context.Context) error { return systemd.Control(ctx, "start") }, ownState: systemd.OwnStateFile, wait: WaitReady}
 }
 func inspectTailnet(ctx context.Context, socket string, region int) (int, error) {
-	v := tailnet.New(socket)
+	v := tailnet.New(tailnet.Options{Socket: socket})
 	defer v.Close()
 	if err := v.Check(ctx); err != nil {
 		return 0, err
