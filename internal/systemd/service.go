@@ -46,11 +46,11 @@ func Render(binary, path string, s config.Settings) (string, error) {
 		if _, err := unitPath(s.TokenFile); err != nil {
 			return "", err
 		}
-		if strings.TrimSpace(s.TokenFile) != s.TokenFile {
-			return "", errors.New("systemd 凭据路径不能以空白字符结尾")
+		if strings.IndexFunc(s.TokenFile, unicode.IsSpace) >= 0 {
+			return "", errors.New("systemd 凭据路径不能包含空白字符")
 		}
 		// LoadCredential splits on the first colon without unquoting either
-		// field. The source path, including interior spaces, must stay literal.
+		// field. Spaces also break systemd's executor serialization.
 		credential = "LoadCredential=cloudflare-token:" + s.TokenFile + "\n"
 	}
 	capabilities := "CapabilityBoundingSet=\n"

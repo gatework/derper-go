@@ -65,12 +65,12 @@ derper-go status --json | jq -e '.active and .ready'
 systemctl is-enabled --quiet derper-go.service
 # Exercise systemd's credential parser with the rendered unit. Syntax validation
 # alone accepts quoted LoadCredential values but then treats quotes literally.
-# A root-only fixture and a path containing spaces catch both startup failures
-# and accidental dependence on the service being able to read the source file.
+# A root-only fixture catches accidental dependence on the service being able
+# to read the source file. The program rejects whitespace in credential paths.
 printf 'test credential\n' > /opt/expected-credential
 chmod 0644 /opt/expected-credential
-install -m 0600 /opt/expected-credential '/etc/derper-go/test credentials.token'
-jq '.dns.publish = true | .cloudflare.token_file = "/etc/derper-go/test credentials.token"' \
+install -m 0600 /opt/expected-credential /etc/derper-go/test-credentials.token
+jq '.dns.publish = true | .cloudflare.token_file = "/etc/derper-go/test-credentials.token"' \
   /etc/derper-go/config.json > /opt/credential-config.json
 derper-go service render -c /opt/credential-config.json |
   sed -e 's/^Type=notify$/Type=oneshot/' \
@@ -80,5 +80,5 @@ derper-go service render -c /opt/credential-config.json |
 systemctl daemon-reload
 systemctl start derper-go-credential-test.service
 test "$(systemctl show derper-go-credential-test.service -p Result --value)" = success
-test "$(stat -c '%a:%U' '/etc/derper-go/test credentials.token')" = 600:root
+test "$(stat -c '%a:%U' /etc/derper-go/test-credentials.token)" = 600:root
 printf 'Isolated systemd installation, readiness, credentials, restart and identity checks passed.\n'

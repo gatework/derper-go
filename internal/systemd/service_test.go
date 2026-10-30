@@ -38,7 +38,7 @@ func TestCredentialSourcePaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/etc/derper-go/cloudflare.token", "/etc/derper-go/cloudflare token", "/etc/derper-go/cloudflare:token"} {
+	for _, path := range []string{"/etc/derper-go/cloudflare.token", "/etc/derper-go/cloudflare:token"} {
 		s.TokenFile = path
 		unit, err := Render(Binary, config.DefaultPath, s)
 		if err != nil {
@@ -48,7 +48,7 @@ func TestCredentialSourcePaths(t *testing.T) {
 			t.Fatalf("credential source must remain literal: %q", path)
 		}
 	}
-	for _, path := range []string{"relative", "/tmp/token ", "/tmp/token\nExecStart=evil", "/tmp/%n", "/tmp/$HOME", "/tmp/\"token\"", "/tmp/token\\"} {
+	for _, path := range []string{"relative", "/tmp/token ", "/tmp/cloudflare token", "/tmp/token\nExecStart=evil", "/tmp/%n", "/tmp/$HOME", "/tmp/\"token\"", "/tmp/token\\"} {
 		s.TokenFile = path
 		if _, err := Render(Binary, config.DefaultPath, s); err == nil {
 			t.Fatalf("accepted unsafe credential path %q", path)
