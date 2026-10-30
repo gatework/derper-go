@@ -104,7 +104,7 @@ func Check() error {
 	if _, err := exec.LookPath("systemctl"); err != nil {
 		return errors.New("缺少 systemctl")
 	}
-	return nil
+	return checkUnit()
 }
 func Control(ctx context.Context, action string) error {
 	switch action {
@@ -137,11 +137,7 @@ func Install(ctx context.Context, path string, s config.Settings) error {
 	if err != nil {
 		return err
 	}
-	if b, e := os.ReadFile(UnitPath); e == nil && !strings.HasPrefix(string(b), managed) {
-		return errors.New("已有未受管理的 derper-go.service，请先人工处理")
-	} else if e != nil && !errors.Is(e, os.ErrNotExist) {
-		return e
-	}
+
 	account, err := user.Lookup("derper-go")
 	if err != nil {
 		var unknown user.UnknownUserError
@@ -190,23 +186,10 @@ func Install(ctx context.Context, path string, s config.Settings) error {
 			}
 		}
 	}
-	// Own only this deployment's state. Symlinks and special files are rejected.
-	err = filepath.WalkDir(config.DefaultDataDir, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		info, e := entry.Info()
-		if e != nil {
-			return e
-		}
-		if !info.IsDir() && !info.Mode().IsRegular() {
-			return errors.New("状态目录包含符号链接或特殊文件")
-		}
-		return os.Chown(path, uid, gid)
-	})
-	if err != nil {
+	if err = ownState(uid, gid); err != nil {
 		return err
 	}
+
 	source, err := os.Executable()
 	if err != nil {
 		return err
@@ -274,4 +257,63 @@ func OwnStateFile(path string) error {
 		return err
 	}
 	return os.Chown(path, uid, gid)
+}
+
+// RestoreStateOwnership keeps root-run offline maintenance readable by the
+// installed service. It only operates on the dedicated standard state directory.
+func RestoreStateOwnership() error {
+	account, err := user.Lookup("derper-go")
+	if err != nil {
+		var unknown user.UnknownUserError
+		if errors.As(err, &unknown) {
+			return nil
+		}
+		return err
+	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil {
+		return err
+	}
+	gid, err := strconv.Atoi(account.Gid)
+	if err != nil {
+		return err
+	}
+	if uid == 0 || account.HomeDir != config.DefaultDataDir {
+		return errors.New("derper-go 服务账户无效")
+	}
+	return ownState(uid, gid)
+}
+func ownState(uid, gid int) error {
+	return filepath.WalkDir(config.DefaultDataDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && !info.Mode().IsRegular() {
+			return errors.New("状态目录包含符号链接或特殊文件")
+		}
+		return os.Chown(path, uid, gid)
+	})
+}
+
+func checkUnit() error {
+	if info, e := os.Lstat(UnitPath); e == nil {
+		if !info.Mode().IsRegular() {
+			return errors.New("已有 derper-go.service 不是普通文件")
+		}
+		b, e := os.ReadFile(UnitPath)
+		if e != nil {
+			return e
+		}
+		if !strings.HasPrefix(string(b), managed) {
+			return errors.New("已有未受管理的 derper-go.service，请先人工处理")
+		}
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return e
+	}
+
+	return nil
 }

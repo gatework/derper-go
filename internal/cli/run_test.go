@@ -87,13 +87,14 @@ func TestInitForegroundIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "deployment", "config.json")
+	t.Chdir(dir)
 	l, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
 		t.Fatal(e)
 	}
 	port := l.Addr().(*net.TCPAddr).Port
 	l.Close()
-	args := []string{"init", "--port", strconv.Itoa(port), "--no-service", "--yes", "--no-dns", "--no-stun", "--access", "public", "--domain", "relay.example.com", "--certificate", certPath, "--key", keyPath, "-c", path}
+	args := []string{"init", "--port", strconv.Itoa(port), "--no-service", "--yes", "--no-dns", "--no-stun", "--access", "public", "--domain", "relay.example.com", "--certificate", "source.pem", "--key", "source.key", "-c", path}
 	code, _, errOut := command(t, args...)
 	if code != 0 {
 		t.Fatal(errOut)

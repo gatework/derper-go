@@ -59,3 +59,25 @@ func TestLockRejectsSymlink(t *testing.T) {
 		t.Fatal("followed lock symlink")
 	}
 }
+
+func TestInstallationAndRuntimeLocksAreIndependent(t *testing.T) {
+	dir := t.TempDir()
+	setup, err := AcquireInstallation(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer setup.Close()
+	if other, err := AcquireInstallation(dir); err == nil {
+		other.Close()
+		t.Fatal("concurrent installation accepted")
+	}
+	store, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if other, err := Open(dir); err == nil {
+		other.Close()
+		t.Fatal("concurrent runtime writer accepted")
+	}
+}

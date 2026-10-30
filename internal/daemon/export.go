@@ -25,21 +25,21 @@ func DERPMap(c config.Settings) *tailcfg.DERPMap {
 	return &tailcfg.DERPMap{Regions: map[tailcfg.DERPRegionID]*tailcfg.DERPRegion{id: {RegionID: id, RegionCode: fmt.Sprintf("relay-%d", id), RegionName: c.Domain, Nodes: []*tailcfg.DERPNode{node}}}}
 }
 
+type regionPolicy struct {
+	OmitDefaultRegions bool                                         `json:"omitDefaultRegions"`
+	Regions            map[tailcfg.DERPRegionID]*tailcfg.DERPRegion `json:"regions"`
+}
+type policyFragment struct {
+	DERPMap regionPolicy `json:"derpMap"`
+}
+
 func Export(c config.Settings, format string) ([]byte, error) {
 	m := DERPMap(c)
 	var value any = m
 	switch format {
 	case "derpmap":
 	case "policy":
-		value = struct {
-			DERPMap struct {
-				OmitDefaultRegions bool                                         `json:"omitDefaultRegions"`
-				Regions            map[tailcfg.DERPRegionID]*tailcfg.DERPRegion `json:"regions"`
-			} `json:"derpMap"`
-		}{DERPMap: struct {
-			OmitDefaultRegions bool                                         `json:"omitDefaultRegions"`
-			Regions            map[tailcfg.DERPRegionID]*tailcfg.DERPRegion `json:"regions"`
-		}{Regions: m.Regions}}
+		value = policyFragment{DERPMap: regionPolicy{Regions: m.Regions}}
 	default:
 		return nil, fmt.Errorf("输出格式应为 policy 或 derpmap")
 	}

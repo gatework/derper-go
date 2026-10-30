@@ -234,7 +234,7 @@ func (w *Workflow) Apply(ctx context.Context, p Plan, acceptedTerms bool) error 
 	if err := safeDirectory(filepath.Dir(p.Path)); err != nil {
 		return err
 	}
-	installation, err := state.Open(filepath.Dir(p.Path))
+	installation, err := state.AcquireInstallation(filepath.Dir(p.Path))
 	if err != nil {
 		return fmt.Errorf("另一初始化进程正在工作：%w", err)
 	}
@@ -263,43 +263,17 @@ func (w *Workflow) Apply(ctx context.Context, p Plan, acceptedTerms bool) error 
 	// The managed token always has one fixed path; input token files are sources.
 	p.Config.Cloudflare.TokenFile = ""
 	p.Settings.TokenFile = filepath.Join(filepath.Dir(p.Path), "cloudflare.token")
+	var copies []certificateCopy
 	if p.Service && !p.Settings.AutomaticCertificate() {
-		for _, item := range []struct {
-			source string
-			target *string
-			name   string
-		}{{p.Settings.CertificateFile, &p.Config.Certificate.File, "certificate.pem"}, {p.Settings.CertificateKey, &p.Config.Certificate.Key, "certificate.key"}} {
-			if item.source != filepath.Join(filepath.Dir(p.Path), item.name) {
-				b, e := fileio.ReadRegularFile(item.source, 1<<20)
-				if e != nil {
-					return e
-				}
-				target := filepath.Join(filepath.Dir(p.Path), item.name)
-				if info, e := os.Lstat(target); e == nil {
-					if !info.Mode().IsRegular() {
-						return errors.New("手动证书目标必须是普通文件")
-					}
-					previous, e := fileio.ReadRegularFile(target, 1<<20)
-					if e != nil {
-						return e
-					}
-					if !bytes.Equal(b, previous) {
-						return errors.New("已有手动证书与本次来源不同，拒绝覆盖")
-					}
-				} else if !errors.Is(e, os.ErrNotExist) {
-					return e
-				} else if e = state.WriteFile(target, b, 0600, true); e != nil {
-					return e
-				}
-
-			}
-			*item.target = item.name
-		}
+		copies = []certificateCopy{{p.Settings.CertificateFile, filepath.Join(filepath.Dir(p.Path), "certificate.pem")}, {p.Settings.CertificateKey, filepath.Join(filepath.Dir(p.Path), "certificate.key")}}
+		p.Config.Certificate.File = "certificate.pem"
+		p.Config.Certificate.Key = "certificate.key"
 		p.Settings, err = Resolve(p.Config, p.Path)
 		if err != nil {
 			return err
 		}
 	}
+
 	b, err := ConfigBytes(p.Config)
 	if err != nil {
 		return err
@@ -327,6 +301,11 @@ func (w *Workflow) Apply(ctx context.Context, p Plan, acceptedTerms bool) error 
 	if err = state.SaveDeployment(p.StateDir, journal); err != nil {
 		return err
 	}
+	for _, file := range copies {
+		if err = file.save(); err != nil {
+			return err
+		}
+	}
 	if p.Settings.NeedsCloudflare() {
 		if err = state.Write(p.Settings.TokenFile, []byte(p.token+"\n")); err != nil {
 			return err
@@ -336,6 +315,9 @@ func (w *Workflow) Apply(ctx context.Context, p Plan, acceptedTerms bool) error 
 		return err
 	}
 	if _, err = store.LoadOrCreateIdentity(); err != nil {
+		return err
+	}
+	if err = ctx.Err(); err != nil {
 		return err
 	}
 	if p.Service {
@@ -401,4 +383,29 @@ func WaitReady(ctx context.Context, dir string, s config.Settings) error {
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+type certificateCopy struct{ source, target string }
+
+func (c certificateCopy) save() error {
+	b, err := fileio.ReadRegularFile(c.source, 1<<20)
+	if err != nil {
+		return err
+	}
+	if info, err := os.Lstat(c.target); err == nil {
+		if !info.Mode().IsRegular() {
+			return errors.New("手动证书目标必须是普通文件")
+		}
+		previous, err := fileio.ReadRegularFile(c.target, 1<<20)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(b, previous) {
+			return errors.New("已有手动证书与本次来源不同，拒绝覆盖")
+		}
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return state.WriteFile(c.target, b, 0600, true)
 }

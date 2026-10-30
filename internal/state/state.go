@@ -18,11 +18,15 @@ import (
 // Lock prevents concurrent writers across the daemon and administrative commands.
 type Lock struct{ file *os.File }
 
-func Acquire(dir string) (*Lock, error) {
+func Acquire(dir string) (*Lock, error) { return acquire(dir, "process.lock") }
+
+// AcquireInstallation serializes setup independently of the daemon writer lock.
+func AcquireInstallation(dir string) (*Lock, error) { return acquire(dir, "setup.lock") }
+func acquire(dir, name string) (*Lock, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "process.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
+	f, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
 	if err != nil {
 		return nil, err
 	}

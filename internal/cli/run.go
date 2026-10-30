@@ -189,7 +189,11 @@ func execute(ctx context.Context, args []string, ui terminal) int {
 			return err
 		}
 		defer store.Close()
-		return action()
+		err = action()
+		if os.Geteuid() == 0 && dir == config.DefaultDataDir {
+			err = errors.Join(err, systemd.RestoreStateOwnership())
+		}
+		return err
 	}
 	switch name {
 	case "run":

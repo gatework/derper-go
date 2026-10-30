@@ -13,6 +13,7 @@ import (
 	"github.com/gatework/derper-go/internal/config"
 	"github.com/gatework/derper-go/internal/setup"
 	"github.com/gatework/derper-go/internal/state"
+	"github.com/gatework/derper-go/internal/systemd"
 )
 
 func initialize(ctx context.Context, args []string, ui terminal) int {
@@ -117,15 +118,26 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 		case "ca":
 			c.Certificate.CA = input.Certificate.CA
 		case "certificate":
-			c.Certificate.File = input.Certificate.File
+			c.Certificate.File, err = filepath.Abs(input.Certificate.File)
+			if err != nil {
+				return failure(ui, err)
+			}
 		case "key":
-			c.Certificate.Key = input.Certificate.Key
+			c.Certificate.Key, err = filepath.Abs(input.Certificate.Key)
+			if err != nil {
+				return failure(ui, err)
+			}
 		case "no-dns":
 			value := !noDNS
 			c.DNS.Publish = &value
 		case "no-stun":
 			value := !noSTUN
 			c.STUN.Enabled = &value
+		}
+	}
+	if !noService {
+		if err = systemd.Check(); err != nil {
+			return failure(ui, err)
 		}
 	}
 	prompt := func(label string, value *string) error {
