@@ -4,12 +4,11 @@ package certificate
 import (
 	"fmt"
 	"net/mail"
-	"net/netip"
-	"net/url"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/gatework/derper-go/internal/config"
 	"golang.org/x/crypto/acme"
 )
 
@@ -29,7 +28,6 @@ type Options struct {
 	Cloudflare         CloudflareOptions
 }
 
-var domainLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 var zoneID = regexp.MustCompile(`^[a-fA-F0-9]{32}$`)
 
 func (c Options) normalized() Options {
@@ -52,32 +50,24 @@ func (c Options) normalized() Options {
 // Validate 只校验结构，不读取凭据、不发起网络请求或创建缓存。
 func (c Options) Validate() error {
 	c = c.normalized()
-	if len(c.Domain) > 253 || !strings.Contains(c.Domain, ".") {
-		return fmt.Errorf("acme.domain must be a fully qualified DNS name")
-	}
-	if _, err := netip.ParseAddr(c.Domain); err == nil {
-		return fmt.Errorf("acme.domain must not be an IP address")
-	}
-	for label := range strings.SplitSeq(c.Domain, ".") {
-		if !domainLabel.MatchString(label) {
-			return fmt.Errorf("acme.domain must be an ASCII DNS name without wildcards (use punycode for IDNs)")
-		}
+	if err := config.ValidateDomain(c.Domain); err != nil {
+		return err
 	}
 	email, err := mail.ParseAddress(c.Email)
 	if err != nil || email.Address != c.Email {
-		return fmt.Errorf("acme.email must be a plain email address")
+		return fmt.Errorf("email：请填写有效的联系邮箱")
 	}
 	if !c.AcceptTerms {
-		return fmt.Errorf("acme.accept_terms must be true to accept the CA terms of service")
+		return fmt.Errorf("自动签发需要接受证书机构条款（--accept-terms）")
 	}
 	if c.Cloudflare.ZoneID != "" && !zoneID.MatchString(c.Cloudflare.ZoneID) {
-		return fmt.Errorf("acme.cloudflare.zone_id must be a 32-character hexadecimal zone ID")
+		return fmt.Errorf("cloudflare.zone must be a 32-character hexadecimal zone ID")
 	}
 	if c.Cloudflare.TokenEnv != "" && c.Cloudflare.TokenFile != "" {
-		return fmt.Errorf("acme.cloudflare token_env and token_file are mutually exclusive")
+		return fmt.Errorf("Cloudflare 凭据文件与环境变量不能同时指定")
 	}
 	if err = secureURL(c.DirectoryURL); err != nil {
-		return fmt.Errorf("acme.directory_url: %w", err)
+		return fmt.Errorf("certificate.ca: %w", err)
 	}
 	if c.PropagationTimeout < time.Second || c.PropagationTimeout > 24*time.Hour {
 		return fmt.Errorf("证书传播等待时间应在 1 秒至 24 小时之间")
@@ -86,10 +76,4 @@ func (c Options) Validate() error {
 	return nil
 }
 
-func secureURL(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
-		return fmt.Errorf("must be an HTTPS URL without credentials or fragment")
-	}
-	return nil
-}
+func secureURL(raw string) error { return config.HTTPSURL(raw) }

@@ -66,7 +66,13 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	}
 	return execute(ctx, args, ui)
 }
-func execute(ctx context.Context, args []string, ui terminal) int {
+func execute(ctx context.Context, args []string, ui terminal) (code int) {
+	defer func() {
+		if code != 0 && errors.Is(ctx.Err(), context.Canceled) {
+			code = 130
+		}
+	}()
+
 	if len(args) == 0 {
 		if !ui.interactive {
 			fmt.Fprint(ui.out, help)
@@ -256,6 +262,7 @@ func execute(ctx context.Context, args []string, ui terminal) int {
 		defer cancel()
 		publisher := daemon.NewDNSPublisher(s, dir, nil)
 		changes, e := publisher.Plan(request)
+		cancel()
 		err = e
 		if err != nil {
 			break
@@ -274,7 +281,9 @@ func execute(ctx context.Context, args []string, ui terminal) int {
 				break
 			}
 		}
-		err = locked(func() error { return applyDNS(request, publisher, changes) })
+		apply, cancelApply := context.WithTimeout(ctx, time.Minute)
+		err = locked(func() error { return applyDNS(apply, publisher, changes) })
+		cancelApply()
 	case "certificate/status":
 		var status certificate.Status
 		if s.AutomaticCertificate() {

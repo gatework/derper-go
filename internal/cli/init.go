@@ -86,6 +86,12 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 				return failure(ui, err)
 			}
 		}
+		if journal.Phase == "prepared" && !noService && !noStart {
+			fmt.Fprintln(ui.out, "继续启动已批准的服务，保留现有身份、证书和 DNS 归属。")
+			if e := setup.New().ResumePrepared(ctx, path, dir); e != nil {
+				return failure(ui, e)
+			}
+		}
 		if journal.Phase == "ready" || journal.Phase == "prepared" {
 			fmt.Fprintln(ui.out, "此部署已初始化，保留现有配置、身份与证书。")
 			return result(ui, showStatus(ui, dir, false))

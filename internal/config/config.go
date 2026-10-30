@@ -19,15 +19,16 @@ import (
 )
 
 const (
-	DefaultPath     = "/etc/derper-go/config.json"
-	DefaultDataDir  = "/var/lib/derper-go"
-	DefaultPort     = 443
-	AlternatePort   = 8443
-	DefaultSTUNPort = 3478
-	DefaultRegion   = 900
-	DefaultSocket   = "/run/tailscale/tailscaled.sock"
-	ProductionCA    = "https://acme-v02.api.letsencrypt.org/directory"
-	StagingCA       = "https://acme-staging-v02.api.letsencrypt.org/directory"
+	DefaultPath       = "/etc/derper-go/config.json"
+	DefaultDataDir    = "/var/lib/derper-go"
+	DefaultRuntimeDir = "/run/derper-go"
+	DefaultPort       = 443
+	AlternatePort     = 8443
+	DefaultSTUNPort   = 3478
+	DefaultRegion     = 900
+	DefaultSocket     = "/run/tailscale/tailscaled.sock"
+	ProductionCA      = "https://acme-v02.api.letsencrypt.org/directory"
+	StagingCA         = "https://acme-staging-v02.api.letsencrypt.org/directory"
 )
 
 type Access string
@@ -197,6 +198,9 @@ func (c Config) Resolve(base string) (Settings, error) {
 	s.CertificateFile = resolve(c.Certificate.File)
 	s.CertificateKey = resolve(c.Certificate.Key)
 	s.TokenFile = resolve(c.Cloudflare.TokenFile)
+	if s.TokenFile == "" {
+		s.TokenFile = filepath.Join(abs, "cloudflare.token")
+	}
 	if (s.CertificateFile == "") != (s.CertificateKey == "") {
 		return s, invalid("手动证书", "证书文件与私钥必须一起填写")
 	}

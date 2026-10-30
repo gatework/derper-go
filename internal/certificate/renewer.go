@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gatework/derper-go/internal/cloudflare"
+	"github.com/gatework/derper-go/internal/retry"
 )
 
 const certificateCheckInterval = time.Hour
@@ -31,7 +32,8 @@ const (
 type renewalFailure struct{ err error }
 
 type Renewer struct {
-	failure atomic.Pointer[renewalFailure]
+	failure        atomic.Pointer[renewalFailure]
+	cleanupFailure atomic.Pointer[renewalFailure]
 	*Store
 	certificateMu sync.Mutex
 	options       Options
@@ -114,6 +116,8 @@ func (m *Renewer) Start(parent context.Context) (err error) {
 		return err
 	}
 	m.wg.Add(1)
+	go m.maintainCleanup(ctx)
+	m.wg.Add(1)
 	go m.maintainScheduled(ctx, certificateCheckInterval, "ACME renewal", m.maintainCertificate, cached, m.certificateCheckDelay)
 	return nil
 }
@@ -122,9 +126,7 @@ func (m *Renewer) maintainCertificate(ctx context.Context) error {
 	if m.renewDue(time.Now()) {
 		return m.renew(ctx)
 	}
-	m.certificateMu.Lock()
-	defer m.certificateMu.Unlock()
-	return m.cleanupPending(ctx)
+	return nil
 }
 
 func (m *Renewer) maintain(ctx context.Context, interval time.Duration, name string, action func(context.Context) error, initial bool) {
@@ -136,7 +138,7 @@ func (m *Renewer) maintainScheduled(ctx context.Context, interval time.Duration,
 	defer m.wg.Done()
 	// 维护成功按正常周期检查；短暂故障先快速恢复，再有界退避，避免等满一小时。
 	firstRetry := min(30*time.Second, max(time.Nanosecond, interval/10))
-	retry, delay := firstRetry, interval
+	backoff, delay := firstRetry, interval
 	if next != nil {
 		delay = min(interval, next(time.Now()))
 	}
@@ -158,12 +160,13 @@ func (m *Renewer) maintainScheduled(ctx context.Context, interval time.Duration,
 			return
 		}
 		if err != nil {
-			delay = retry
+			delay = backoff
 			delay = max(delay, retryDelay(err))
-			retry = min(interval, 15*time.Minute, retry*2)
+			backoff = retry.Next(backoff, min(interval, 15*time.Minute))
+			delay = retry.Jitter(delay)
 			m.logger.Warn(name+" failed; will retry", "error", err, "retry_in", delay)
 		} else {
-			delay, retry = interval, firstRetry
+			delay, backoff = interval, firstRetry
 			if next != nil {
 				delay = min(interval, next(time.Now()))
 				// 仅已处理过到期状态才退避；维护期间刚跨过续期点应立即再检查。
@@ -237,6 +240,45 @@ func wait(ctx context.Context, d time.Duration) error {
 // still-valid TLS snapshot. A later successful attempt clears it.
 func (m *Renewer) RenewalError() error {
 	if failure := m.failure.Load(); failure != nil {
+		return failure.err
+	}
+	return nil
+}
+
+// Cleanup is independent of issuance: a failed TXT deletion does not discard a
+// valid certificate. The ownership journal remains until deletion is confirmed.
+func (m *Renewer) maintainCleanup(ctx context.Context) {
+	defer m.wg.Done()
+	delay, backoff := time.Duration(0), 30*time.Second
+	for {
+		if wait(ctx, delay) != nil {
+			return
+		}
+		m.certificateMu.Lock()
+		err := m.cleanupPending(ctx)
+		m.certificateMu.Unlock()
+		m.recordCleanup(err)
+		if ctx.Err() != nil {
+			return
+		}
+		if err == nil {
+			delay, backoff = time.Minute, 30*time.Second
+		} else {
+			delay = retry.Jitter(max(backoff, retryDelay(err)))
+			backoff = retry.Next(backoff, 15*time.Minute)
+		}
+	}
+}
+func (m *Renewer) recordCleanup(err error) {
+	if err == nil {
+		m.cleanupFailure.Store(nil)
+		return
+	}
+	m.cleanupFailure.Store(&renewalFailure{err})
+	m.logger.Warn("ACME TXT 清理失败，保留归属日志并后台重试", "error", err)
+}
+func (m *Renewer) CleanupError() error {
+	if failure := m.cleanupFailure.Load(); failure != nil {
 		return failure.err
 	}
 	return nil

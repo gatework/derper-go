@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/gatework/derper-go/internal/retry"
 	"io"
 	"net/http"
 	"net/url"
@@ -25,23 +27,20 @@ type Client struct {
 // Error exposes status and retry timing without including upstream response bodies.
 type Error struct {
 	Status     int
+	Kind       string
+	Cause      error
 	Codes      []int
 	RetryAfter time.Duration
 }
 
 func (e *Error) Error() string {
-	return fmt.Sprintf("cloudflare HTTP %d, error codes %v", e.Status, e.Codes)
+	return fmt.Sprintf("cloudflare %s error (HTTP %d), error codes %v", e.Kind, e.Status, e.Codes)
 }
 
-func RetryAfter(header string) time.Duration {
-	if n, err := strconv.ParseInt(header, 10, 32); err == nil && n > 0 {
-		return time.Duration(n) * time.Second
-	}
-	if t, err := http.ParseTime(header); err == nil {
-		return max(0, time.Until(t))
-	}
-	return 0
-}
+var ErrProtocol = errors.New("invalid Cloudflare response")
+
+func (e *Error) Unwrap() error               { return e.Cause }
+func RetryAfter(header string) time.Duration { return retry.After(header, time.Now()) }
 
 type Record struct {
 	Comment string `json:"comment,omitempty"`
@@ -54,7 +53,7 @@ type Record struct {
 }
 
 type response struct {
-	Success bool            `json:"success"`
+	Success *bool           `json:"success"`
 	Result  json.RawMessage `json:"result"`
 	Errors  []struct {
 		Code int `json:"code"`
@@ -98,16 +97,25 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*r
 	}
 	var out response
 	decodeErr := json.Unmarshal(data, &out)
-	if res.StatusCode < 200 || res.StatusCode >= 300 || !out.Success {
-		codes := make([]int, len(out.Errors))
-		for i, e := range out.Errors {
-			codes[i] = e.Code
-		}
-		// 不记录上游正文，防止服务端回显凭据。
-		return nil, &Error{Status: res.StatusCode, Codes: codes, RetryAfter: RetryAfter(res.Header.Get("Retry-After"))}
+	protocolError := decodeErr != nil || out.Success == nil
+	if !protocolError && *out.Success && (len(out.Result) == 0 || bytes.Equal(out.Result, []byte("null"))) {
+		protocolError = true
 	}
-	if decodeErr != nil {
-		return nil, fmt.Errorf("cloudflare returned invalid JSON (HTTP %d)", res.StatusCode)
+	if protocolError || res.StatusCode < 200 || res.StatusCode >= 300 || !*out.Success {
+		apiErr := &Error{Status: res.StatusCode, Kind: "api", RetryAfter: RetryAfter(res.Header.Get("Retry-After"))}
+		if protocolError {
+			apiErr.Kind, apiErr.Cause = "protocol", ErrProtocol
+		}
+		if res.StatusCode < 200 || res.StatusCode >= 300 {
+			apiErr.Kind = "http"
+		}
+		if decodeErr == nil {
+			for _, e := range out.Errors {
+				apiErr.Codes = append(apiErr.Codes, e.Code)
+			}
+		}
+		// Neither decoding errors nor upstream bodies may echo a credential.
+		return nil, apiErr
 	}
 	return &out, nil
 }

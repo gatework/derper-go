@@ -50,6 +50,7 @@ type Workflow struct {
 	checkHost     func() error
 	checkTailnet  func(context.Context, string, int) (int, error)
 	portAvailable func(context.Context, int) bool
+	stunAvailable func(context.Context, int) bool
 	discoverIPv4  func(context.Context) (string, error)
 	dnsPlan       func(context.Context, config.Settings, string, string) ([]dns.Change, error)
 	terms         func(context.Context, string) (string, error)
@@ -60,7 +61,7 @@ type Workflow struct {
 }
 
 func New() *Workflow {
-	return &Workflow{checkHost: systemd.Check, checkTailnet: inspectTailnet, portAvailable: portAvailable, discoverIPv4: dns.DiscoverIPv4, dnsPlan: inspectDNS, terms: discoverTerms, install: systemd.Install, start: func(ctx context.Context) error { return systemd.Control(ctx, "start") }, ownState: systemd.OwnStateFile, wait: WaitReady}
+	return &Workflow{checkHost: systemd.Check, checkTailnet: inspectTailnet, portAvailable: portAvailable, stunAvailable: stunAvailable, discoverIPv4: dns.DiscoverIPv4, dnsPlan: inspectDNS, terms: discoverTerms, install: systemd.Install, start: func(ctx context.Context) error { return systemd.Control(ctx, "start") }, ownState: systemd.OwnStateFile, wait: WaitReady}
 }
 func inspectTailnet(ctx context.Context, socket string, region int) (int, error) {
 	v := tailnet.New(socket)
@@ -76,6 +77,14 @@ func portAvailable(ctx context.Context, port int) bool {
 		return false
 	}
 	l.Close()
+	return true
+}
+func stunAvailable(ctx context.Context, port int) bool {
+	conn, err := (&net.ListenConfig{}).ListenPacket(ctx, "udp", net.JoinHostPort("", strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
 	return true
 }
 func inspectDNS(ctx context.Context, s config.Settings, dir, token string) ([]dns.Change, error) {
@@ -109,14 +118,7 @@ func discoverTerms(ctx context.Context, ca string) (string, error) {
 	return directory.Terms, nil
 }
 func Resolve(c config.Config, path string) (config.Settings, error) {
-	s, err := c.Resolve(filepath.Dir(path))
-	if err != nil {
-		return s, err
-	}
-	if s.TokenFile == "" {
-		s.TokenFile = filepath.Join(filepath.Dir(path), "cloudflare.token")
-	}
-	return s, nil
+	return c.Resolve(filepath.Dir(path))
 }
 func DataDir(path string) string {
 	if path == config.DefaultPath {
@@ -165,6 +167,20 @@ func (w *Workflow) Prepare(ctx context.Context, r Request) (Plan, error) {
 	p.Settings, err = Resolve(p.Config, p.Path)
 	if err != nil {
 		return p, err
+	}
+	if p.Settings.STUNEnabled && !w.stunAvailable(ctx, p.Settings.STUNPort) {
+		return p, fmt.Errorf("STUN UDP 端口 %d 不可用", p.Settings.STUNPort)
+	}
+	if p.Settings.CaptivePortal && !w.portAvailable(ctx, 80) {
+		return p, errors.New("HTTP 探测端口 80 不可用")
+	}
+	if p.Service {
+		// Validate the credential path that Apply will manage, before any writes.
+		serviceSettings := p.Settings
+		serviceSettings.TokenFile = filepath.Join(filepath.Dir(p.Path), "cloudflare.token")
+		if _, err = systemd.Render(systemd.Binary, p.Path, serviceSettings); err != nil {
+			return p, err
+		}
 	}
 	if !p.Settings.AutomaticCertificate() {
 		if _, err = certificate.Manual(p.Settings.Domain, p.Settings.CertificateFile, p.Settings.CertificateKey); err != nil {
@@ -285,8 +301,15 @@ func (w *Workflow) Apply(ctx context.Context, p Plan, acceptedTerms bool) error 
 	if err == nil && journal.ConfigHash != Hash(b) {
 		return errors.New("未完成安装的配置与本次选择不同，请恢复原配置后重试")
 	}
-	if journal.Phase == "ready" || journal.Phase == "prepared" {
+	if journal.Phase == "ready" {
 		return nil
+	}
+	if journal.Phase == "prepared" {
+		if err = store.Close(); err != nil {
+			return err
+		}
+		locked = false
+		return w.finish(ctx, p, journal)
 	}
 	journal = state.Deployment{Domain: p.Settings.Domain, ConfigHash: Hash(b), Config: b, Phase: "approved"}
 	if acceptedTerms && p.Settings.AutomaticCertificate() {
@@ -339,17 +362,21 @@ func (w *Workflow) Apply(ctx context.Context, p Plan, acceptedTerms bool) error 
 		return err
 	}
 	locked = false
+	return w.finish(ctx, p, journal)
+}
+
+func (w *Workflow) finish(ctx context.Context, p Plan, journal state.Deployment) error {
 	if !p.Service || !p.Start {
 		return nil
 	}
-	if err = w.start(ctx); err != nil {
+	if err := w.start(ctx); err != nil {
 		return err
 	}
-	if err = w.wait(ctx, p.StateDir, p.Settings); err != nil {
+	if err := w.wait(ctx, p.StateDir, p.Settings); err != nil {
 		return err
 	}
 	journal.Phase = "ready"
-	if err = state.SaveDeployment(p.StateDir, journal); err != nil {
+	if err := state.SaveDeployment(p.StateDir, journal); err != nil {
 		return err
 	}
 	if p.Service {
@@ -357,6 +384,53 @@ func (w *Workflow) Apply(ctx context.Context, p Plan, acceptedTerms bool) error 
 	}
 	return nil
 }
+
+// ResumePrepared finishes an already approved installation without repeating
+// discovery, credentials, identity creation or DNS adoption.
+func (w *Workflow) ResumePrepared(ctx context.Context, path, dir string) error {
+	if path != config.DefaultPath || dir != config.DefaultDataDir {
+		return errors.New("恢复系统服务需要标准配置和状态目录")
+	}
+	installation, err := state.AcquireInstallation(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer installation.Close()
+	journal, err := state.ReadDeployment(dir)
+	if err != nil {
+		return err
+	}
+	if journal.Phase != "prepared" {
+		return errors.New("安装阶段不是 prepared")
+	}
+	raw, err := fileio.ReadRegularFile(path, 1<<20)
+	if err != nil {
+		return err
+	}
+	c, err := config.Decode(raw)
+	if err != nil {
+		return err
+	}
+	canonical, err := ConfigBytes(c)
+	if err != nil {
+		return err
+	}
+	if Hash(canonical) != journal.ConfigHash {
+		return errors.New("配置与已批准的安装不一致，请使用 config check 和 service start")
+	}
+	settings, err := Resolve(c, path)
+	if err != nil {
+		return err
+	}
+	if err = daemon.Check(settings); err != nil {
+		return err
+	}
+	if err = systemd.Refresh(ctx, settings); err != nil {
+		return err
+	}
+	return w.finish(ctx, Plan{Path: path, StateDir: dir, Settings: settings, Service: true, Start: true}, journal)
+}
+
 func WaitReady(ctx context.Context, dir string, s config.Settings) error {
 	ctx, cancel := context.WithTimeout(ctx, 16*time.Minute)
 	defer cancel()

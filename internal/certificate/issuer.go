@@ -38,6 +38,7 @@ func (m *Renewer) renew(parent context.Context) (result error) {
 		return err
 	}
 	if err := m.cleanupPending(ctx); err != nil {
+		m.recordCleanup(err)
 		return err
 	}
 	key, err := m.accountKey()
@@ -148,12 +149,10 @@ func (m *Renewer) authorize(ctx context.Context, client *acme.Client, authURL st
 		return err
 	}
 	defer func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if cleanupErr := m.cleanupPending(cleanup); cleanupErr != nil {
-			err = errors.Join(err, fmt.Errorf("clean up ACME TXT: %w", cleanupErr))
-		}
+		// Keep the journal on cancellation. Never extend service shutdown for DNS.
+		m.recordCleanup(m.cleanupPending(ctx))
 	}()
+
 	// 日志保留 DNS 原始值兼容旧缓存；API 使用带引号的 TXT 表示。
 	published := pending
 	published.Content = strconv.Quote(value)

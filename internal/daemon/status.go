@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gatework/derper-go/internal/certificate"
+	"github.com/gatework/derper-go/internal/config"
 	"github.com/gatework/derper-go/internal/fileio"
 	"github.com/gatework/derper-go/internal/relay"
 	"github.com/gatework/derper-go/internal/state"
@@ -26,6 +27,8 @@ type Component struct {
 }
 type Status struct {
 	Domain      string    `json:"domain"`
+	Phase       string    `json:"phase"`
+	Cleanup     Component `json:"certificate_cleanup"`
 	PID         int       `json:"pid"`
 	Process     string    `json:"process"`
 	Active      bool      `json:"active"`
@@ -58,7 +61,10 @@ func processIdentity(pid int) (string, error) {
 }
 func ReadStatus(dir string) (Status, error) {
 	var s Status
-	b, err := fileio.ReadRegularFile(filepath.Join(dir, "status.json"), 1<<20)
+	b, err := fileio.ReadRegularFile(statusPath(dir), 1<<20)
+	if errors.Is(err, os.ErrNotExist) {
+		b, err = fileio.ReadRegularFile(filepath.Join(dir, "status.json"), 1<<20) // v0.1.0
+	}
 	if err != nil {
 		return s, err
 	}
@@ -73,74 +79,146 @@ func ReadStatus(dir string) (Status, error) {
 	s.Active = s.Active && inUse && e == nil && identity == s.Process
 	if s.Active && time.Since(s.Updated) > 30*time.Second {
 		s.Ready = false
+		s.Phase = "stale"
 		s.Error = "运行状态超过 30 秒未更新，请查看 service logs"
 	}
 	if !s.Active {
+		s.Phase = "stopped"
 		s.Ready = false
 	}
 	return s, nil
 }
 
-type health struct {
-	logger *slog.Logger
-	mu     sync.Mutex
-	dir    string
-	status Status
+// Custom foreground deployments keep disposable snapshots beside their state.
+// The system service uses tmpfs, independently of durable identity and journals.
+func statusPath(dir string) string {
+	if filepath.Clean(dir) == config.DefaultDataDir {
+		return filepath.Join(config.DefaultRuntimeDir, "status.json")
+	}
+	return filepath.Join(dir, "run", "status.json")
 }
 
-func newHealth(dir, domain string) (*health, error) {
+type health struct {
+	logger   *slog.Logger
+	mu       sync.Mutex
+	path     string
+	status   Status
+	dirty    chan struct{}
+	quit     chan struct{}
+	done     chan struct{}
+	stopOnce sync.Once
+	write    func(string, any) error
+}
+
+func newHealth(dir, domain string, logger *slog.Logger) (*health, error) {
 	identity, err := processIdentity(os.Getpid())
 	if err != nil {
 		return nil, err
 	}
-	h := &health{logger: slog.Default(), dir: dir, status: Status{Domain: domain, PID: os.Getpid(), Process: identity, Active: true, Certificate: Component{State: "pending"}, DNS: Component{State: "pending"}, Tailnet: Component{State: "pending"}}}
-	return h, h.save()
+	if logger == nil {
+		logger = slog.Default()
+	}
+	h := &health{logger: logger, path: statusPath(dir), dirty: make(chan struct{}, 1), quit: make(chan struct{}), done: make(chan struct{}), write: state.WriteSnapshot,
+		status: Status{Domain: domain, PID: os.Getpid(), Process: identity, Active: true, Certificate: Component{State: "pending"}, DNS: Component{State: "pending"}, Tailnet: Component{State: "pending"}, Cleanup: Component{State: "pending"}}}
+	if err = os.MkdirAll(filepath.Dir(h.path), 0700); err != nil {
+		return nil, err
+	}
+	if err = h.save(); err != nil {
+		return nil, err
+	}
+	go h.publish()
+	return h, nil
 }
+
+func (h *health) snapshot() Status {
+	h.mu.Lock()
+	s := h.status
+	h.mu.Unlock()
+	s.Updated = time.Now().UTC()
+	switch {
+	case !s.Active:
+		s.Phase = "stopped"
+	case !s.Ready:
+		s.Phase = "starting"
+	case s.Certificate.State == "degraded" || s.DNS.State == "degraded" || s.Tailnet.State == "degraded" || s.Cleanup.State == "degraded":
+		s.Phase = "degraded"
+	default:
+		s.Phase = "ready"
+	}
+	return s
+}
+
 func (h *health) save() error {
-	h.status.Updated = time.Now().UTC()
-	err := state.WriteJSON(filepath.Join(h.dir, "status.json"), h.status)
+	// Only the publisher writes after startup. No filesystem I/O holds mu.
+	err := h.write(h.path, h.snapshot())
 	if err != nil {
-		h.logger.Warn("无法保存运行状态", "error", err)
+		h.logger.Warn("无法保存运行状态，将在下次心跳重试", "error", err)
 	}
 	return err
 }
+func (h *health) changed() {
+	select {
+	case h.dirty <- struct{}{}:
+	default:
+	}
+}
+func (h *health) publish() {
+	defer close(h.done)
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-h.quit:
+			_ = h.save()
+			return
+		case <-ticker.C:
+		case <-h.dirty:
+		}
+		_ = h.save()
+	}
+}
 func (h *health) ready(get relay.CertificateSource) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
 	pair, err := get(nil)
 	if err != nil {
 		return err
 	}
+	h.mu.Lock()
 	h.status.Ready = true
 	h.status.Certificate = Component{State: "ready", Detail: pair.Leaf.NotAfter.UTC().Format(time.RFC3339)}
-	return h.save()
+	h.mu.Unlock()
+	h.changed()
+	return nil
 }
 func (h *health) stop(err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.status.Active = false
-	h.status.Ready = false
-	if err != nil {
-		h.status.Error = err.Error()
-	}
-	_ = h.save()
+	h.stopOnce.Do(func() {
+		h.mu.Lock()
+		h.status.Active, h.status.Ready = false, false
+		if err != nil {
+			h.status.Error = err.Error()
+		}
+		h.mu.Unlock()
+		close(h.quit)
+		<-h.done
+	})
 }
 func (h *health) dns(err error) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.status.DNS = Component{State: "ready"}
 	if err != nil {
 		h.status.DNS = Component{State: "degraded", Detail: err.Error()}
 	}
-	_ = h.save()
+	h.mu.Unlock()
+	h.changed()
 }
 func (h *health) dnsDisabled() {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.status.DNS = Component{State: "disabled"}
-	_ = h.save()
+	h.mu.Unlock()
+	h.changed()
 }
 func (h *health) monitor(ctx context.Context, get relay.CertificateSource, verifier *tailnet.Verifier, renewer *certificate.Renewer) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 	for {
 		check := Component{State: "public"}
 		if verifier != nil {
@@ -158,18 +236,22 @@ func (h *health) monitor(ctx context.Context, get relay.CertificateSource, verif
 		} else {
 			h.status.Certificate = Component{State: "ready", Detail: pair.Leaf.NotAfter.UTC().Format(time.RFC3339)}
 		}
-		if err == nil && renewer != nil {
-			if renewalErr := renewer.RenewalError(); renewalErr != nil {
-				h.status.Certificate.State = "degraded"
-				h.status.Certificate.Detail = "当前证书有效，续期检查失败：" + renewalErr.Error()
+		h.status.Cleanup = Component{State: "disabled"}
+		if renewer != nil {
+			h.status.Cleanup.State = "ready"
+			if cleanupErr := renewer.CleanupError(); cleanupErr != nil {
+				h.status.Cleanup = Component{State: "degraded", Detail: cleanupErr.Error()}
+			}
+			if renewalErr := renewer.RenewalError(); err == nil && renewalErr != nil {
+				h.status.Certificate = Component{State: "degraded", Detail: "当前证书有效，续期检查失败：" + renewalErr.Error()}
 			}
 		}
-		_ = h.save()
 		h.mu.Unlock()
+		h.changed()
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(5 * time.Second):
+		case <-ticker.C:
 		}
 	}
 }

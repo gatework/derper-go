@@ -38,6 +38,7 @@ type acmeFixture struct {
 	txt                                      []record
 	orders, deleted                          int
 	accepted, finalized, fail                bool
+	failDelete                               bool
 	expectedTXT                              string
 	certificate                              []byte
 	caKey                                    *ecdsa.PrivateKey
@@ -83,6 +84,11 @@ func (f *acmeFixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request
 		case r.URL.Path == "/client/v4/zones/0123456789abcdef0123456789abcdef":
 			send(map[string]any{"success": true, "result": map[string]string{"name": "example.com", "status": "active"}})
 		case r.Method == http.MethodDelete:
+			if f.failDelete {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				send(map[string]any{"success": false})
+				return
+			}
 			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
 			for i, v := range f.txt {
 				if v.ID == id {
@@ -361,7 +367,7 @@ func TestACMEIssueRenewRestart(t *testing.T) {
 	}
 }
 
-func TestACMECancelCleansTXT(t *testing.T) {
+func TestACMECancelRetainsRecoverableTXT(t *testing.T) {
 	c := renewalOptions(t)
 	f := newACMEFixture(t, c.Domain)
 	m := f.manager(t, c)
@@ -375,16 +381,23 @@ func TestACMECancelCleansTXT(t *testing.T) {
 		t.Fatal("canceled issuance succeeded")
 	}
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if len(f.txt) != 0 || f.deleted != 1 {
-		t.Fatalf("canceled issuance left TXT: %v", f.txt)
+	remaining, deleted := len(f.txt), f.deleted
+	f.mu.Unlock()
+	if remaining != 1 || deleted != 0 {
+		t.Fatalf("canceled issuance lost journal record: remaining=%d deleted=%d", remaining, deleted)
 	}
-	// 失败启动必须释放锁，允许下一次启动。
+	// Failed startup releases the lock; recovery performs owned cleanup first.
 	other := f.manager(t, c)
-	if err := other.openCache(); err != nil {
+	if err := other.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	other.Close()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.txt) != 0 {
+		t.Fatal("restart failed to clean owned TXT")
+	}
+
 }
 
 func TestRestartCleansPendingTXTWithValidCache(t *testing.T) {
@@ -659,5 +672,45 @@ func TestDueCertificateRenewalDoesNotBusyLoop(t *testing.T) {
 	defer f.mu.Unlock()
 	if f.orders < 3 || f.orders > 6 {
 		t.Fatalf("unexpected successful renewal cadence: %d orders", f.orders)
+	}
+}
+
+func TestValidCertificateSurvivesTXTCleanupFailure(t *testing.T) {
+	c := renewalOptions(t)
+	f := newACMEFixture(t, c.Domain)
+	f.failDelete = true
+	m := f.manager(t, c)
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.GetCertificate(nil); err != nil {
+		t.Fatal(err)
+	}
+	m.Close()
+	if m.CleanupError() == nil {
+		t.Fatal("cleanup failure not reported")
+	}
+	if _, err := os.Stat(filepath.Join(m.cachePath, "pending-txt.json")); err != nil {
+		t.Fatal("lost cleanup journal", err)
+	}
+	f.mu.Lock()
+	f.failDelete = false
+	f.mu.Unlock()
+	restored := f.manager(t, c)
+	if err := restored.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Explicit maintenance models the next background attempt without sleeping.
+	restored.certificateMu.Lock()
+	err := restored.cleanupPending(context.Background())
+	restored.certificateMu.Unlock()
+	restored.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.txt) != 0 || f.orders != 1 {
+		t.Fatalf("cleanup retried issuance: records=%d orders=%d", len(f.txt), f.orders)
 	}
 }

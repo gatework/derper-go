@@ -64,11 +64,10 @@ func Run(parent context.Context, s config.Settings, dir string, logger *slog.Log
 	}
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	health, err := newHealth(dir, s.Domain)
+	health, err := newHealth(dir, s.Domain, logger)
 	if err != nil {
 		return err
 	}
-	health.logger = logger
 	defer func() { health.stop(err) }()
 	var verifier *tailnet.Verifier
 	if s.Access == config.Tailnet {

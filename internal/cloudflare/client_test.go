@@ -93,3 +93,27 @@ func TestResponseSizeBound(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestMalformedEnvelopeKeepsProtocolAndHTTPReasons(t *testing.T) {
+	for _, body := range []string{`{"secret":`, `null`, `[]`, `{}`, `{"success":null}`, `{"success":true,"result":null}`, `{"success":true}`} {
+		for _, status := range []int{200, 429} {
+			t.Run(fmt.Sprintf("%d/%s", status, body), func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Retry-After", "60")
+					w.WriteHeader(status)
+					fmt.Fprint(w, body)
+				}))
+				defer server.Close()
+				c := &Client{baseURL: server.URL, http: server.Client()}
+				_, err := c.ListRecords(context.Background(), "relay.example.com")
+				var api *Error
+				if !errors.Is(err, ErrProtocol) || !errors.As(err, &api) || api.Status != status || api.RetryAfter != time.Minute {
+					t.Fatalf("lost cause: %v", err)
+				}
+				if strings.Contains(err.Error(), "secret") {
+					t.Fatal("body exposed")
+				}
+			})
+		}
+	}
+}

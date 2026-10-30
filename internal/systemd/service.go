@@ -72,8 +72,10 @@ Group=derper-go
 ExecStart=%s run --config %s
 %sStateDirectory=derper-go
 StateDirectoryMode=0700
+RuntimeDirectory=derper-go
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=restart
 UMask=0077
-Environment=GOMEMLIMIT=96MiB
 Restart=on-failure
 RestartSec=30
 TimeoutStartSec=15min

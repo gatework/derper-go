@@ -58,6 +58,20 @@ func Write(path string, data []byte) error {
 // WriteFile publishes complete contents and permissions in one filesystem step.
 // Exclusive publication uses a hard link, so a concurrent creator is preserved.
 func WriteFile(path string, data []byte, mode os.FileMode, exclusive bool) error {
+	return writeFile(path, data, mode, exclusive, true)
+}
+
+// WriteSnapshot atomically replaces disposable runtime data without fsync.
+// Identity, credentials and recovery journals must use Write or WriteJSON.
+func WriteSnapshot(path string, value any) error {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return writeFile(path, append(b, '\n'), 0600, false, false)
+}
+
+func writeFile(path string, data []byte, mode os.FileMode, exclusive, durable bool) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".derper-*")
 	if err != nil {
 		return err
@@ -70,8 +84,10 @@ func WriteFile(path string, data []byte, mode os.FileMode, exclusive bool) error
 	if _, err := f.Write(data); err != nil {
 		return err
 	}
-	if err := f.Sync(); err != nil {
-		return err
+	if durable {
+		if err := f.Sync(); err != nil {
+			return err
+		}
 	}
 	if err := f.Close(); err != nil {
 		return err
@@ -83,6 +99,9 @@ func WriteFile(path string, data []byte, mode os.FileMode, exclusive bool) error
 	}
 	if err != nil {
 		return err
+	}
+	if !durable {
+		return nil
 	}
 	d, err := os.Open(filepath.Dir(path))
 	if err != nil {

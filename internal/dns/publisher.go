@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/gatework/derper-go/internal/cloudflare"
 	"github.com/gatework/derper-go/internal/config"
 	"github.com/gatework/derper-go/internal/fileio"
+	"github.com/gatework/derper-go/internal/retry"
 	"github.com/gatework/derper-go/internal/state"
 )
 
@@ -275,7 +275,7 @@ func (c *Publisher) Apply(ctx context.Context, approved ...cloudflare.Record) ([
 // Run maintains DNS without terminating an otherwise usable relay on API errors.
 func (c *Publisher) Run(ctx context.Context, log *slog.Logger, report func(error)) {
 	interval := 5 * time.Minute
-	retry := min(interval, 30*time.Second)
+	backoff := min(interval, 30*time.Second)
 	delay := time.Duration(0)
 	for {
 		timer := time.NewTimer(delay)
@@ -298,16 +298,16 @@ func (c *Publisher) Run(ctx context.Context, log *slog.Logger, report func(error
 		}
 		if err != nil {
 			log.Warn("DNS maintenance failed", "error", err)
-			delay = retry
+			delay = backoff
 			var apiErr *cloudflare.Error
 			if errors.As(err, &apiErr) {
 				delay = max(delay, apiErr.RetryAfter)
 			}
-			retry = min(interval, 15*time.Minute, retry*2)
+			backoff = retry.Next(backoff, interval)
 		} else {
 			delay = interval
-			retry = min(interval, 30*time.Second)
+			backoff = min(interval, 30*time.Second)
 		}
-		delay += time.Duration(rand.Int64N(max(int64(delay/10), 1)))
+		delay = retry.Jitter(delay)
 	}
 }

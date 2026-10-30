@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/gatework/derper-go/internal/config"
@@ -23,12 +25,12 @@ func TestStaleStatusNeverClaimsReadiness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := newHealth(dir, "relay.example.com")
+	identity, err := processIdentity(os.Getpid())
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.status.Ready = true
-	if err = h.save(); err != nil {
+	snapshot := Status{PID: os.Getpid(), Process: identity, Active: true, Ready: true, Updated: time.Now()}
+	if err = state.WriteJSON(filepath.Join(dir, "status.json"), snapshot); err != nil {
 		t.Fatal(err)
 	}
 	s, err := ReadStatus(dir)
@@ -45,8 +47,8 @@ func TestStaleStatusNeverClaimsReadiness(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	h.status.Process = "previous-boot:reused-pid"
-	if err = h.save(); err != nil {
+	snapshot.Process = "previous-boot:reused-pid"
+	if err = state.WriteJSON(filepath.Join(dir, "status.json"), snapshot); err != nil {
 		t.Fatal(err)
 	}
 	s, err = ReadStatus(dir)
@@ -133,4 +135,53 @@ func TestDaemonReadyBeforeDNSFailureAndNotify(t *testing.T) {
 	if err != nil || status.Active || status.Ready {
 		t.Fatal("shutdown status", status, err)
 	}
+}
+
+func TestStartupHeartbeatAndWriteRecovery(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var writes int
+		var saved Status
+		fail := true
+		h := &health{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), status: Status{Active: true}, dirty: make(chan struct{}, 1), quit: make(chan struct{}), done: make(chan struct{}), write: func(_ string, v any) error {
+			writes++
+			if fail {
+				return errors.New("disk unavailable")
+			}
+			saved = v.(Status)
+			return nil
+		}}
+		go h.publish()
+		synctest.Wait()
+		time.Sleep(35 * time.Second)
+		synctest.Wait()
+		if writes != 3 {
+			t.Fatal("missing startup heartbeats", writes)
+		}
+		fail = false
+		h.dns(nil)
+		synctest.Wait()
+		if saved.Phase != "starting" || saved.Ready || !saved.Active || saved.Updated.IsZero() {
+			t.Fatal("incorrect startup state", saved)
+		}
+		h.stop(nil)
+		if saved.Phase != "stopped" || saved.Active {
+			t.Fatal("shutdown was not flushed", saved)
+		}
+	})
+}
+
+func TestSlowStatusWriteDoesNotHoldHealthLock(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		entered, release := make(chan struct{}), make(chan struct{})
+		h := &health{logger: slog.Default(), dirty: make(chan struct{}, 1), write: func(string, any) error { close(entered); <-release; return nil }}
+		done := make(chan struct{})
+		go func() { _ = h.save(); close(done) }()
+		<-entered
+		h.dns(errors.New("maintenance failure"))
+		if h.snapshot().DNS.State != "degraded" {
+			t.Fatal("blocked state update")
+		}
+		close(release)
+		<-done
+	})
 }

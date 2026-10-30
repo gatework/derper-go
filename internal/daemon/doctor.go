@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
+	"slices"
 	"strconv"
 	"time"
 
@@ -30,6 +32,12 @@ func Doctor(ctx context.Context, c config.Settings) []CheckResult {
 		out = append(out, CheckResult{name, err == nil, detail})
 	}
 	ips, err := net.DefaultResolver.LookupIPAddr(ctx, c.Domain)
+	if err == nil {
+		err = checkAddresses(c, ips)
+	}
+	if err != nil {
+		err = fmt.Errorf("%w；核对 DNS 传播、Cloudflare DNS-only 以及代理出口，固定地址应使用 dns.ipv4/dns.ipv6", err)
+	}
 	add("DNS", fmt.Sprint(ips), err)
 	port := strconv.Itoa(c.Port)
 	d := tls.Dialer{NetDialer: &net.Dialer{Timeout: 5 * time.Second}, Config: &tls.Config{ServerName: c.Domain, MinVersion: tls.VersionTLS12}}
@@ -40,10 +48,16 @@ func Doctor(ctx context.Context, c config.Settings) []CheckResult {
 		detail = tlsConn.ConnectionState().PeerCertificates[0].NotAfter.UTC().Format(time.RFC3339)
 		conn.Close()
 	}
+	if err != nil {
+		err = fmt.Errorf("%w；检查 HTTPS 监听、安全组及代理回包路由", err)
+	}
 	add("TLS", detail, err)
 	if c.STUNEnabled {
 		p := strconv.Itoa(c.STUNPort)
 		err = checkSTUN(ctx, net.JoinHostPort(c.Domain, p))
+		if err != nil {
+			err = fmt.Errorf("%w；检查 UDP 端口、安全组及代理回包路由", err)
+		}
 		add("STUN", "STUN 地址绑定响应有效", err)
 	}
 	if c.Access == config.Tailnet {
@@ -56,6 +70,24 @@ func Doctor(ctx context.Context, c config.Settings) []CheckResult {
 	return out
 }
 
+func checkAddresses(c config.Settings, ips []net.IPAddr) error {
+	if len(ips) == 0 {
+		return errors.New("域名尚未解析到地址")
+	}
+	addresses := make([]netip.Addr, 0, len(ips))
+	for _, ip := range ips {
+		if a, ok := netip.AddrFromSlice(ip.IP); ok {
+			addresses = append(addresses, a.Unmap())
+		}
+	}
+	for _, want := range []netip.Addr{c.IPv4, c.IPv6} {
+		if want.IsValid() && !slices.Contains(addresses, want) {
+			return fmt.Errorf("解析结果 %v 未包含配置的固定地址 %s", addresses, want)
+		}
+	}
+	return nil
+}
+
 func checkSTUN(ctx context.Context, address string) error {
 	d := net.Dialer{Timeout: 5 * time.Second}
 	conn, err := d.DialContext(ctx, "udp", address)
@@ -63,6 +95,8 @@ func checkSTUN(ctx context.Context, address string) error {
 		return err
 	}
 	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	deadline := time.Now().Add(5 * time.Second)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
