@@ -15,7 +15,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/derper-go
 
 DERP 测试使用上游客户端与真实 TLS/HTTP Upgrade/WebSocket 连接，验证双向数据、证书切换期间已有连接保持可用、MetaCert、STUN 事务和映射地址。本机验证使用临时 Unix socket 假服务，覆盖允许、拒绝、断开与超时。
 
-CLI 校验和导出命令验证无网络/无状态写入；配置解码提供 fuzz 入口。systemd 单元应使用 systemd-analyze verify 检查。
+CLI 校验和导出命令验证无网络/无状态写入；配置解码提供 fuzz 入口。systemd 单元使用 systemd-analyze verify --recursive-errors=no 检查，让生成单元自身的警告导致失败，同时不把 runner 中无关系统单元的警告作为本项目错误。
 
 ## 额外回归
 

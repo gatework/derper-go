@@ -21,7 +21,7 @@ jobs:
           git diff --exit-code -- go.mod go.sum
       - run: go test -race -timeout 5m ./...
       - run: go vet ./...
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -show verbose ./...
       - name: CLI and systemd smoke checks
         run: |
           make build
@@ -29,11 +29,7 @@ jobs:
           bin/derper-go check -c examples/server.json
           bin/derper-go export-derpmap -c examples/server.json
           bin/derper-go service render -c examples/server.json --binary "$PWD/bin/derper-go" > "$RUNNER_TEMP/derper-go.service"
-          diagnostics=$(systemd-analyze verify "$RUNNER_TEMP/derper-go.service" 2>&1)
-          if test -n "$diagnostics"; then
-            printf '%s\n' "$diagnostics"
-            exit 1
-          fi
+          systemd-analyze verify --recursive-errors=no "$RUNNER_TEMP/derper-go.service"
   build:
     runs-on: ubuntu-latest
     strategy:
@@ -51,3 +47,13 @@ jobs:
           GOOS: linux
           GOARCH: ${{ matrix.arch }}
         run: go build -trimpath -o derper-go ./cmd/derper-go
+      - name: Verify distribution packaging
+        if: matrix.arch == 'amd64'
+        run: |
+          make package COMMIT="$GITHUB_SHA"
+          cd dist
+          sha256sum -c checksums.txt
+          for arch in amd64 arm64; do
+            tar -tzf "derper-go_linux_$arch.tar.gz" > "$RUNNER_TEMP/contents-$arch.txt"
+            test -s "derper-go_linux_$arch/licenses/tailscale.com-LICENSE"
+          done
