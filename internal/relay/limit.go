@@ -18,6 +18,7 @@ type ConnectionStats struct {
 }
 
 type connectionLimit struct {
+	mu                 sync.RWMutex
 	rate               *rate.Limiter
 	rateRejected       atomic.Uint64
 	limit              int64
@@ -26,6 +27,8 @@ type connectionLimit struct {
 }
 
 func (l *connectionLimit) stats() ConnectionStats {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	return ConnectionStats{RateRejected: l.rateRejected.Load(), Active: l.active.Load(), Limit: l.limit, Accepted: l.accepted.Load(), Rejected: l.rejected.Load()}
 }
 func (l *connectionLimit) setRate(perSecond float64, burst int) {
@@ -35,6 +38,8 @@ func (l *connectionLimit) setRate(perSecond float64, burst int) {
 	l.rate = rate.NewLimiter(rate.Limit(perSecond), burst)
 }
 func (l *connectionLimit) acquire() bool {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	if l.rate != nil && !l.rate.Allow() {
 		l.rateRejected.Add(1)
 		l.rejected.Add(1)
@@ -51,6 +56,23 @@ func (l *connectionLimit) acquire() bool {
 			return true
 		}
 	}
+}
+
+func (l *connectionLimit) update(limit int, perSecond float64, burst int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.limit = int64(limit)
+	if perSecond == 0 {
+		l.rate = nil
+		return
+	}
+	if l.rate == nil {
+		l.setRate(perSecond, burst)
+		return
+	}
+	// Preserve the token balance instead of granting a fresh burst on reload.
+	l.rate.SetLimit(rate.Limit(perSecond))
+	l.rate.SetBurst(burst)
 }
 
 type limitedListener struct {

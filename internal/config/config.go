@@ -104,6 +104,7 @@ type Settings struct {
 	BootstrapNames                                                           []string
 	BootstrapUnlisted                                                        []BootstrapName
 	MaxConnections, MaxConcurrentChecks                                      int
+	MaxAdmissionRequests                                                     int
 	Domain, Email                                                            string
 	Port, Region, STUNPort                                                   int
 	Access                                                                   AdmissionMode
@@ -114,6 +115,8 @@ type Settings struct {
 
 func (s Settings) AutomaticCertificate() bool { return s.CertificateFile == "" }
 func (s Settings) NeedsCloudflare() bool      { return s.AutomaticCertificate() || s.PublishDNS }
+func (s Settings) UsesTailnet() bool          { return s.RelayEnabled && s.Access == Tailnet }
+func (s Settings) UsesController() bool       { return s.RelayEnabled && s.AdmissionURL != "" }
 
 // FieldError identifies invalid input without echoing a supplied secret.
 type FieldError struct{ Field, Message string }
@@ -170,6 +173,13 @@ func (c Config) Validate() error { _, err := c.Resolve("."); return err }
 func (c Config) Resolve(base string) (Settings, error) {
 	s := Settings{Domain: strings.ToLower(strings.TrimSuffix(c.Domain, ".")), Email: c.Email, Port: DefaultPort, Region: c.Region, Access: c.Admission.Mode, STUNPort: c.STUN.Port, STUNEnabled: true, PublishDNS: true, CA: c.Certificate.CA, Socket: c.Tailscale.Socket, ZoneID: c.Cloudflare.Zone, LogLevel: c.LogLevel}
 	s.MaxConnections, s.MaxConcurrentChecks = c.Relay.MaxConnections, c.Admission.MaxConcurrentChecks
+	s.MaxAdmissionRequests = c.Admission.MaxRequests
+	if s.MaxAdmissionRequests == 0 {
+		s.MaxAdmissionRequests = 128
+	}
+	if s.MaxAdmissionRequests < 1 || s.MaxAdmissionRequests > 8192 {
+		return s, invalid("admission.max_requests", "请求总额度应为 1–8192，包含排队与查询")
+	}
 	if err := c.resolveListen(&s); err != nil {
 		return s, err
 	}
@@ -177,13 +187,16 @@ func (c Config) Resolve(base string) (Settings, error) {
 		s.MaxConnections = DefaultMaxConnections
 	}
 	if s.MaxConcurrentChecks == 0 {
-		s.MaxConcurrentChecks = DefaultMaxConcurrentChecks
+		s.MaxConcurrentChecks = min(DefaultMaxConcurrentChecks, s.MaxAdmissionRequests)
 	}
 	if s.MaxConnections < 1 || s.MaxConnections > 60000 {
 		return s, invalid("relay.max_connections", "连接上限应为 1–60000")
 	}
 	if s.MaxConcurrentChecks < 1 || s.MaxConcurrentChecks > 128 {
 		return s, invalid("admission.max_concurrent_checks", "并行验证上限应为 1–128")
+	}
+	if s.MaxConcurrentChecks > s.MaxAdmissionRequests {
+		return s, invalid("admission.max_requests", "请求总额度不能小于并行查询额度")
 	}
 	if err := ValidateDomain(s.Domain); err != nil {
 		return s, err

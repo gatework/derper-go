@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"tailscale.com/derp/derpserver"
@@ -44,6 +45,7 @@ type ClientVerifier interface {
 }
 
 type Server struct {
+	policy      atomic.Pointer[Policy]
 	mesh        meshState
 	ready       chan struct{}
 	connections *connectionLimit
@@ -69,6 +71,7 @@ func Bind(parent context.Context, c Options, identity key.NodePrivate, certifica
 		limit = DefaultMaxConnections
 	}
 	s = &Server{connections: &connectionLimit{limit: int64(limit)}, cancel: cancel, closed: make(chan struct{}), ready: make(chan struct{})}
+	s.policy.Store(&Policy{Homepage: c.Homepage, AdmissionTimeout: c.AdmissionTimeout})
 	defer func(bound *Server) {
 		if err != nil {
 			bound.Close()
@@ -113,8 +116,9 @@ func Bind(parent context.Context, c Options, identity key.NodePrivate, certifica
 			http.NotFound(w, r)
 			return
 		}
-		if c.Homepage != "" && c.Homepage != "blank" {
-			http.Redirect(w, r, c.Homepage, http.StatusFound)
+		homepage := s.policy.Load().Homepage
+		if homepage != "" && homepage != "blank" {
+			http.Redirect(w, r, homepage, http.StatusFound)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -156,6 +160,18 @@ func Bind(parent context.Context, c Options, identity key.NodePrivate, certifica
 		s.httpServer = &http.Server{Handler: httpMux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return ctx }}
 	}
 	return s, nil
+}
+
+// Policy contains only values safe to change while existing DERP clients remain
+// connected. Listeners and protocol settings are intentionally immutable.
+type Policy struct {
+	Homepage         string
+	AdmissionTimeout time.Duration
+}
+
+func (s *Server) UpdatePolicy(p Policy, maxConnections int, perSecond float64, burst int) {
+	s.connections.update(maxConnections, perSecond, burst)
+	s.policy.Store(&p)
 }
 
 func (s *Server) Connections() ConnectionStats { return s.connections.stats() }

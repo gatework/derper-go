@@ -29,6 +29,7 @@ func fixture(t *testing.T) (*Workflow, Request) {
 	}
 	w.terms = func(context.Context, string) (string, error) { return "https://ca.example/terms", nil }
 	w.install = func(context.Context, string, config.Settings) error { return nil }
+	w.stage = func(context.Context, string, config.Settings) error { return nil }
 	w.ownState = func(string) error { return nil }
 	return w, Request{Config: config.Config{Domain: "relay.example.com", Email: "ops@example.com"}, Path: filepath.Join(dir, "config.json"), StateDir: filepath.Join(dir, "state"), Token: "secret-test-token"}
 }

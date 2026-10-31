@@ -268,7 +268,7 @@ func (h *health) monitor(ctx context.Context, get relay.CertificateSource, verif
 		h.mu.Lock()
 		h.status.Tailnet = check
 		h.status.AdmissionHealth = check
-		if h.relayEnabled && h.mode == config.Controller {
+		if h.relayEnabled && h.controllerError != nil {
 			h.status.AdmissionHealth = Component{State: "configured"}
 			if h.admission != nil && h.admission().Checked > 0 {
 				h.status.AdmissionHealth.State = "ready"
@@ -277,6 +277,9 @@ func (h *health) monitor(ctx context.Context, get relay.CertificateSource, verif
 				if err := h.controllerError(); err != nil {
 					h.status.AdmissionHealth = Component{State: "degraded", Detail: err.Error()}
 				}
+			}
+			if verifier != nil && check.State == "degraded" {
+				h.status.AdmissionHealth = check
 			}
 		}
 		if h.mesh != nil {

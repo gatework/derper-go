@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from publish_release import GitHub, publish_release
+from publish_release import GitHub, publish_release, changelog_notes
 from test_release_assets import COMMIT, VERSION, make_archive
 
 
@@ -203,3 +203,18 @@ class PublishReleaseTest(unittest.TestCase):
                 github.create_draft(VERSION, COMMIT, False, "notes")
             self.assertEqual(lookup.call_count, 1)
             sleep.assert_not_called()
+
+
+class ChangelogTest(unittest.TestCase):
+    def test_release_notes_are_version_specific_and_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "CHANGELOG.md"
+            path.write_text("# Changes\n## v0.2.0\nnew behavior\n## v0.1.0\nold behavior\n", encoding="utf-8")
+            self.assertEqual(changelog_notes("v0.2.0", path), "new behavior")
+            self.assertEqual(changelog_notes("v0.2.0-rc.1", path), "new behavior")
+            with self.assertRaises(ValueError):
+                changelog_notes("v0.3.0", path)
+
+
+if __name__ == "__main__":
+    unittest.main()

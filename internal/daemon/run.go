@@ -3,12 +3,16 @@ package daemon
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"github.com/gatework/derper-go/internal/admission"
 	"github.com/gatework/derper-go/internal/bootstrap"
 	"log/slog"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"sync"
+	"syscall"
 
 	"github.com/gatework/derper-go/internal/certificate"
 	"github.com/gatework/derper-go/internal/cloudflare"
@@ -49,7 +53,16 @@ func Check(s config.Settings) error {
 	return err
 }
 
-func Run(parent context.Context, s config.Settings, dir string, logger *slog.Logger) (err error) {
+func Run(parent context.Context, s config.Settings, dir string, logger *slog.Logger) error {
+	return run(parent, s, dir, "", nil, logger)
+}
+func RunFile(parent context.Context, s config.Settings, dir, path string, logger *slog.Logger) error {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGHUP)
+	defer signal.Stop(signals)
+	return run(parent, s, dir, path, signals, logger)
+}
+func run(parent context.Context, s config.Settings, dir, path string, signals <-chan os.Signal, logger *slog.Logger) (err error) {
 	if err = Check(s); err != nil {
 		return err
 	}
@@ -77,15 +90,18 @@ func Run(parent context.Context, s config.Settings, dir string, logger *slog.Log
 	var verifier *tailnet.Verifier
 	var controller *admission.Controller
 	var access relay.ClientVerifier
-	if s.RelayEnabled && s.Access == config.Controller {
-		controller = admission.New(admission.Options{URL: s.AdmissionURL, FailOpen: s.AdmissionFailOpen, Timeout: s.AdmissionTimeout, MaxConcurrentChecks: s.MaxConcurrentChecks})
+	if s.UsesController() {
+		controller = admission.New(admission.Options{URL: s.AdmissionURL, FailOpen: s.AdmissionFailOpen, Timeout: s.AdmissionTimeout, MaxConcurrentChecks: s.MaxConcurrentChecks, MaxRequests: s.MaxAdmissionRequests})
 		defer controller.Close()
 		access = controller
 	}
-	if s.RelayEnabled && s.Access == config.Tailnet {
-		verifier = tailnet.New(tailnet.Options{Socket: s.Socket, MaxConcurrentChecks: s.MaxConcurrentChecks})
+	if s.UsesTailnet() {
+		verifier = tailnet.New(tailnet.Options{Socket: s.Socket, MaxConcurrentChecks: s.MaxConcurrentChecks, MaxRequests: s.MaxAdmissionRequests})
 		defer verifier.Close()
 		access = verifier
+	}
+	if verifier != nil && controller != nil {
+		access = admission.All(s.MaxAdmissionRequests, verifier, controller)
 	}
 	var renewer *certificate.Renewer
 	var get relay.CertificateSource
@@ -102,6 +118,9 @@ func Run(parent context.Context, s config.Settings, dir string, logger *slog.Log
 			return err
 		}
 	}
+	live := &liveCertificate{}
+	live.set(get)
+	get = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) { return live.current.Load().get(hello) }
 	opts := relay.Options{Disabled: !s.RelayEnabled, Homepage: s.Homepage, MaxConnections: s.MaxConnections, Domain: s.Domain, Listen: s.HTTPSAddress(), STUNEnabled: s.STUNEnabled, STUNListen: s.STUNAddress(), HTTPPort: s.HTTPPort, Verifier: access, AdmissionTimeout: s.AdmissionTimeout, BlockedApps: s.BlockedApps, ConnectionRate: s.ConnectionRate, ConnectionBurst: s.ConnectionBurst, TCP: &relay.TCPOptions{Keepalive: s.TCPKeepalive, UserTimeout: s.TCPUserTimeout, WriteTimeout: s.TCPWriteTimeout}}
 	if s.MeshKeyFile != "" {
 		secret, e := relay.LoadMeshKey(s.MeshKeyFile)
@@ -150,6 +169,16 @@ func Run(parent context.Context, s config.Settings, dir string, logger *slog.Log
 		cancel()
 		<-done
 		return err
+	}
+	if path != "" {
+		current := s
+		closeControl, e := startReloadControl(dir, func() error { return reloadConfiguration(path, &current, server, controller, live) }, logger, signals)
+		if e != nil {
+			cancel()
+			<-done
+			return e
+		}
+		defer closeControl()
 	}
 	message := "HTTPS 与 DERP 中继已就绪"
 	if !s.RelayEnabled {

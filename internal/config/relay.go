@@ -30,6 +30,7 @@ type Admission struct {
 	FailOpen            *bool         `json:"fail_open,omitempty"`
 	Timeout             *Duration     `json:"timeout,omitempty"`
 	MaxConcurrentChecks int           `json:"max_concurrent_checks,omitempty"`
+	MaxRequests         int           `json:"max_requests,omitempty"`
 	BlockedApps         []string      `json:"blocked_apps,omitempty"`
 }
 type Mesh struct {
@@ -128,12 +129,12 @@ func (c Config) resolveAdvanced(s *Settings, base string) error {
 	if c.Admission.FailOpen != nil {
 		s.AdmissionFailOpen = *c.Admission.FailOpen
 	}
-	if s.Access == Controller {
+	if s.Access == Controller || (s.Access == Tailnet && s.AdmissionURL != "") {
 		if _, err := webURL(s.AdmissionURL, true); err != nil {
 			return invalid("admission.url", "controller 准入模式需要 HTTPS 地址；本机回环服务也可使用 HTTP")
 		}
 	} else if s.AdmissionURL != "" || s.AdmissionFailOpen {
-		return invalid("admission", "自定义准入服务需要 admission.mode 为 controller")
+		return invalid("admission", "自定义准入服务需要 admission.mode 为 tailnet 或 controller")
 	}
 	if len(c.Admission.BlockedApps) > 64 {
 		return invalid("admission.blocked_apps", "最多设置 64 个应用名称")

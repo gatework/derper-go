@@ -28,6 +28,7 @@ jobs:
         run: |
           test "$GITHUB_REF_TYPE" = tag
           python3 scripts/release_assets.py version "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          python3 -c 'import sys; sys.path.insert(0,"scripts"); from publish_release import changelog_notes; changelog_notes(sys.argv[1])' "$GITHUB_REF_NAME"
           commit=$(git rev-parse HEAD)
           test "$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")" = "$commit"
           test "$GITHUB_SHA" = "$commit"

@@ -40,6 +40,21 @@ derper-go tailnet config | jq -e '.derpMap.regions["900"].Nodes[0].DERPPort == 8
 identity=$(sha256sum /var/lib/derper-go/identity.json)
 configuration=$(sha256sum /etc/derper-go/config.json)
 pid=$(systemctl show derper-go.service -p MainPID --value)
+# Reload must acknowledge success without changing the PID or active listener.
+jq '.relay.max_connections = 4096 | .relay.homepage = "https://example.com"' /etc/derper-go/config.json > /tmp/reload-config.json
+cat /tmp/reload-config.json > /etc/derper-go/config.json
+systemctl reload derper-go.service
+test "$pid" = "$(systemctl show derper-go.service -p MainPID --value)"
+test "$(stat -c '%a:%U' /run/derper-go/control.sock)" = 600:derper-go
+# SIGHUP uses the same validated path; a malformed file must leave the daemon up.
+cp /etc/derper-go/config.json /tmp/valid-config.json
+printf '{"domain":' > /etc/derper-go/config.json
+if derper-go service reload; then exit 1; fi
+systemctl kill --kill-who=main --signal=HUP derper-go.service
+cat /tmp/valid-config.json > /etc/derper-go/config.json
+systemctl reload derper-go.service
+test "$pid" = "$(systemctl show derper-go.service -p MainPID --value)"
+configuration=$(sha256sum /etc/derper-go/config.json)
 derper-go service restart
 test "$pid" != "$(systemctl show derper-go.service -p MainPID --value)"
 test "$identity" = "$(sha256sum /var/lib/derper-go/identity.json)"

@@ -42,13 +42,14 @@ type Options struct {
 	FailOpen            bool
 	Timeout             time.Duration
 	MaxConcurrentChecks int
+	MaxRequests         int
 }
 type controllerFailure struct{ err error }
 type Controller struct {
 	running, peak     atomic.Int64
 	failure           atomic.Pointer[controllerFailure]
 	checked, failOpen atomic.Uint64
-	options           Options
+	policy            atomic.Pointer[Options]
 	client            *http.Client
 	transport         *http.Transport
 	ctx               context.Context
@@ -67,15 +68,28 @@ func New(options Options) *Controller {
 	if options.MaxConcurrentChecks <= 0 {
 		options.MaxConcurrentChecks = 32
 	}
-	options.MaxConcurrentChecks = min(options.MaxConcurrentChecks, 128)
+	if options.MaxRequests <= 0 {
+		options.MaxRequests = 128
+	}
+	options.MaxRequests = min(options.MaxRequests, 8192)
+	options.MaxConcurrentChecks = min(options.MaxConcurrentChecks, 128, options.MaxRequests)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = (&net.Dialer{Timeout: time.Second}).DialContext
-	transport.ResponseHeaderTimeout = options.Timeout
-	transport.TLSHandshakeTimeout = options.Timeout
+	transport.ResponseHeaderTimeout = 3 * time.Second
+	transport.TLSHandshakeTimeout = 3 * time.Second
 	transport.MaxIdleConns, transport.MaxIdleConnsPerHost, transport.MaxConnsPerHost = options.MaxConcurrentChecks, options.MaxConcurrentChecks, options.MaxConcurrentChecks
 	transport.IdleConnTimeout = time.Minute
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Controller{options: options, client: &http.Client{Transport: transport, Timeout: options.Timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, transport: transport, ctx: ctx, cancel: cancel, requests: make(chan struct{}, 128), checks: make(chan struct{}, options.MaxConcurrentChecks)}
+	controller := &Controller{client: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, transport: transport, ctx: ctx, cancel: cancel, requests: make(chan struct{}, options.MaxRequests), checks: make(chan struct{}, options.MaxConcurrentChecks)}
+	controller.policy.Store(&options)
+	return controller
+}
+
+// UpdatePolicy affects new checks; in-flight checks keep their original snapshot.
+func (c *Controller) UpdatePolicy(url string, failOpen bool, timeout time.Duration) {
+	options := *c.policy.Load()
+	options.URL, options.FailOpen, options.Timeout = url, failOpen, timeout
+	c.policy.Store(&options)
 }
 func (c *Controller) Stats() Stats {
 	return Stats{PeakRunning: c.peak.Load(), Checked: c.checked.Load(), FailOpen: c.failOpen.Load(), Requests: len(c.requests), Running: len(c.checks), MaxConcurrentChecks: cap(c.checks), MaxRequests: cap(c.requests), Rejected: c.rejected.Load(), Limited: c.limited.Load()}
@@ -115,7 +129,8 @@ func (c *Controller) VerifyClient(parent context.Context, request tailcfg.DERPAd
 		c.limited.Add(1)
 		return ErrLimit
 	}
-	ctx, cancel := context.WithTimeout(parent, c.options.Timeout)
+	options := c.policy.Load()
+	ctx, cancel := context.WithTimeout(parent, options.Timeout)
 	defer cancel()
 	stop := context.AfterFunc(c.ctx, cancel)
 	defer stop()
@@ -133,7 +148,7 @@ func (c *Controller) VerifyClient(parent context.Context, request tailcfg.DERPAd
 	}
 	defer c.running.Add(-1)
 	c.checked.Add(1)
-	err = c.query(ctx, request)
+	err = c.query(ctx, request, options)
 	if c.ctx.Err() != nil {
 		return ErrClosed
 	}
@@ -145,22 +160,22 @@ func (c *Controller) VerifyClient(parent context.Context, request tailcfg.DERPAd
 	} else {
 		c.failure.Store(nil)
 	}
-	if parent.Err() != nil && !(c.options.FailOpen && errors.Is(err, ErrUnavailable)) {
+	if parent.Err() != nil && !(options.FailOpen && errors.Is(err, ErrUnavailable)) {
 		return parent.Err()
 	}
 	// Only a controller outage can use the explicitly configured fallback.
-	if c.options.FailOpen && errors.Is(err, ErrUnavailable) {
+	if options.FailOpen && errors.Is(err, ErrUnavailable) {
 		c.failOpen.Add(1)
 		return nil
 	}
 	return err
 }
-func (c *Controller) query(ctx context.Context, request tailcfg.DERPAdmitClientRequest) error {
+func (c *Controller) query(ctx context.Context, request tailcfg.DERPAdmitClientRequest, options *Options) error {
 	body, err := json.Marshal(request)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.options.URL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, options.URL, bytes.NewReader(body))
 	if err != nil {
 		return ErrUnavailable
 	}

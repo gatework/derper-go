@@ -20,7 +20,7 @@ output=$(cd "$DIST_DIR" && pwd)
 work=$(mktemp -d "$output/.package.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/common/licenses"
-cp LICENSE NOTICE README.md go.mod go.sum "$work/common/"
+cp LICENSE NOTICE README.md CHANGELOG.md go.mod go.sum "$work/common/"
 cp -R docs examples "$work/common/"
 goroot=$("$GO" env GOROOT)
 cp "$goroot/LICENSE" "$work/common/licenses/go-LICENSE"

@@ -129,7 +129,7 @@ MIT 许可；上游来源及许可证见 [NOTICE](NOTICE)。
 }
 ```
 
-上述片段合并到现有配置；域名、邮箱等原有设置继续有效。连接数可设为 1–60000，并行查询可设为 1–128，省略或 0 使用默认值。上限保护资源，并不承诺达到对应连接数时的吞吐。
+上述片段合并到现有配置；域名、邮箱等原有设置继续有效。连接数可设为 1–60000，并行查询可设为 1–128，请求总额度通过 `admission.max_requests` 设为 1–8192，且不能小于并行额度；省略或 0 使用默认值。上限保护资源，并不承诺达到对应连接数时的吞吐。
 
 `status --json` 增加运行阶段、连接数、准入计数和 `certificate_cleanup`。启动签证期间每 10 秒持续心跳；超过 30 秒未更新会标记过期。服务状态放在 `/run/derper-go`，自定义前台部署放在状态目录下的 `run/`；身份、证书及恢复日志继续保存在原位置。
 
@@ -137,3 +137,5 @@ MIT 许可；上游来源及许可证见 [NOTICE](NOTICE)。
 运行参数已按领域统一，详见 [配置参考](docs/CONFIGURATION.md)。使用 `config show --effective` 查看默认值；监听地址、准入控制器、Mesh 和 bootstrap DNS 均使用结构化设置。旧的顶层 `port`、`access`、`captive_portal` 和 `tailscale.max_concurrent_checks` 已移除，请按配置参考转换后运行 `config check`。
 
 本轮审查问题、修复验证与 1,000 连接实测数据见 [代码审查记录](docs/REVIEW.md)。
+
+现有官方节点迁移、组合准入和无断连配置重载见 [部署说明](docs/DEPLOYMENT.md) 与 [配置参考](docs/CONFIGURATION.md)。版本变更见 [CHANGELOG.md](CHANGELOG.md)。

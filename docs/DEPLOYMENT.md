@@ -71,6 +71,30 @@ Cloudflare Token 轮换时原子替换凭据文件。前台运行按请求重读
 
 新程序不会停止旧服务、修改其文件或自动写入 Tailnet 策略。测试中所有安装与服务重启均在独立容器内完成。
 
+## 保留官方节点身份迁移
+
+先备份旧服务单元、配置、身份与证书。下面示例使用已有证书缓存，保留区域与端口；域名地址记录暂由原管理程序维护，新程序仅维护自己的证书续期：
+
+```sh
+sudo ./derper-go init --yes --accept-terms --no-start \
+  --domain relay.example.com --email ops@example.com \
+  --region 902 --listen :8443 --no-dns --no-stun \
+  --identity /var/lib/derper/derper.key \
+  --import-certificate /var/lib/derper/certs/relay.example.com.crt \
+  --import-key /var/lib/derper/certs/relay.example.com.key \
+  --token-file /etc/existing-service/cloudflare.token
+```
+
+`--identity` 要求明确区域、Tailnet 模式及不立即启动。只复用同域名、同 HTTPS 端口的已有单节点区域；其他节点或多节点区域拒绝自动处理。原 HTTPS 仍在运行时，会连接本地实际监听地址，在正常 TLS 验证后核对服务公钥与导入身份一致；不能用这个入口忽略任意端口占用。新身份与已有状态冲突时拒绝覆盖。旧服务已经停止、HTTPS 端口空闲时，仍校验区域和导入文件。
+
+迁移暂存只安装配置、证书和单元，不启用新服务的开机启动。确认准备成功后，在维护窗口停止并禁用旧服务，再 `sudo systemctl enable --now derper-go.service`。程序不自动停止旧服务、改动原目录或更新控制台策略。若新服务失败，停止并禁用新服务，恢复原服务启用状态和备份即可；不要让两个进程同时使用新状态目录。
+
+示例沿用关闭 STUN 的部署。需要保留 STUN/HTTP 时删除对应关闭参数并按原配置设置端口；已占用的 UDP/HTTP 监听仍拒绝准备，需在停止旧服务后重试，不绕过这些冲突。导入证书只写自动续期缓存，不把节点变为手动证书模式；首次实际续期会使用新程序自己的账户状态。外部 DNS 发布方未交接前保持 `--no-dns`。
+
+## 配置重载
+
+v0.2.0 提供 `service reload`、`config reload`、systemd `reload` 和 SIGHUP。支持范围及失败行为见 [配置参考](CONFIGURATION.md#安全热重载)。从旧版首次升级时，应先替换程序并执行 `service restart` 刷新单元；仅替换文件不会让运行中的旧进程获得重载能力。Token 轮换与监听/后端变化继续使用重启。
+
 ## 从 v0.1.0 升级
 
 本轮改进不自动升级运行中的服务。安排维护窗口后，先备份配置和整个状态目录，再使用经过 CI 的发行包替换程序；使用 `config check` 检查原有配置，`service render` 审阅新的单元，最后通过 `service restart` 更新单元并重启。

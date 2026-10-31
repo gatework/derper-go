@@ -140,20 +140,14 @@ func WriteJSON(path string, value any) error {
 
 // Identity preserves the upstream derper JSON representation, including its public identity.
 func Identity(path string) (key.NodePrivate, error) {
-	var cfg struct{ PrivateKey key.NodePrivate }
 	data, err := fileio.ReadRegularFile(path, 16<<10)
 	if err == nil {
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			return cfg.PrivateKey, fmt.Errorf("decode DERP identity: %w", err)
-		}
-		if cfg.PrivateKey.IsZero() {
-			return cfg.PrivateKey, errors.New("DERP identity contains a zero key")
-		}
-		return cfg.PrivateKey, nil
+		return DecodeIdentity(data)
 	}
 	if !errors.Is(err, os.ErrNotExist) {
-		return cfg.PrivateKey, err
+		return key.NodePrivate{}, err
 	}
+	cfg := struct{ PrivateKey key.NodePrivate }{}
 	cfg.PrivateKey = key.NewNode()
 	if err := WriteJSON(path, cfg); err != nil {
 		return key.NodePrivate{}, err
@@ -167,4 +161,13 @@ func NewOwner() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b[:]), nil
+}
+
+// DecodeIdentity validates imported state without echoing key material.
+func DecodeIdentity(data []byte) (key.NodePrivate, error) {
+	var cfg struct{ PrivateKey key.NodePrivate }
+	if json.Unmarshal(data, &cfg) != nil || cfg.PrivateKey.IsZero() {
+		return key.NodePrivate{}, errors.New("DERP 身份文件无效或缺少私钥")
+	}
+	return cfg.PrivateKey, nil
 }

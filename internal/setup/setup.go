@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/crypto/acme"
 
+	"github.com/gatework/derper-go/internal/certificate"
 	"github.com/gatework/derper-go/internal/cloudflare"
 	"github.com/gatework/derper-go/internal/config"
 	"github.com/gatework/derper-go/internal/daemon"
@@ -28,39 +29,46 @@ import (
 )
 
 type Request struct {
-	Config         config.Config
-	Path, StateDir string
-	Token          string
-	Service, Start bool
+	Config                                     config.Config
+	Path, StateDir                             string
+	Token                                      string
+	Service, Start                             bool
+	IdentityPath, ImportCertificate, ImportKey string
 }
 type Plan struct {
-	Config                   config.Config
-	Settings                 config.Settings
-	Path, StateDir, TermsURL string
-	Changes                  []dns.Change
-	AlternatePort            bool
-	Service, Start           bool
-	token                    string
-	original                 []byte
+	Config                       config.Config
+	Settings                     config.Settings
+	Path, StateDir, TermsURL     string
+	Changes                      []dns.Change
+	AlternatePort                bool
+	Service, Start               bool
+	token                        string
+	original                     []byte
+	identity                     []byte
+	importCertificate, importKey string
+	ExistingListener             bool
 }
 
 // Workflow's dependencies are private; tests replace only host/network boundaries.
 type Workflow struct {
-	checkHost     func() error
-	checkTailnet  func(context.Context, string, int) (int, error)
-	portAvailable func(context.Context, string, int) bool
-	stunAvailable func(context.Context, string, int) bool
-	discoverIPv4  func(context.Context) (string, error)
-	dnsPlan       func(context.Context, config.Settings, string, string) ([]dns.Change, error)
-	terms         func(context.Context, string) (string, error)
-	install       func(context.Context, string, config.Settings) error
-	start         func(context.Context) error
-	wait          func(context.Context, string, config.Settings) error
-	ownState      func(string) error
+	checkHost            func() error
+	checkTailnet         func(context.Context, string, int) (int, error)
+	portAvailable        func(context.Context, string, int) bool
+	stunAvailable        func(context.Context, string, int) bool
+	discoverIPv4         func(context.Context) (string, error)
+	dnsPlan              func(context.Context, config.Settings, string, string) ([]dns.Change, error)
+	terms                func(context.Context, string) (string, error)
+	install              func(context.Context, string, config.Settings) error
+	start                func(context.Context) error
+	wait                 func(context.Context, string, config.Settings) error
+	ownState             func(string) error
+	stage                func(context.Context, string, config.Settings) error
+	checkMigrationRegion func(context.Context, config.Settings) error
+	checkRelayIdentity   func(context.Context, config.Settings, []byte) error
 }
 
 func New() *Workflow {
-	return &Workflow{checkHost: systemd.Check, checkTailnet: inspectTailnet, portAvailable: portAvailable, stunAvailable: stunAvailable, discoverIPv4: dns.DiscoverIPv4, dnsPlan: inspectDNS, terms: discoverTerms, install: systemd.Install, start: func(ctx context.Context) error { return systemd.Control(ctx, "start") }, ownState: systemd.OwnStateFile, wait: WaitReady}
+	return &Workflow{stage: systemd.Stage, checkMigrationRegion: inspectMigrationRegion, checkRelayIdentity: inspectRelayIdentity, checkHost: systemd.Check, checkTailnet: inspectTailnet, portAvailable: portAvailable, stunAvailable: stunAvailable, discoverIPv4: dns.DiscoverIPv4, dnsPlan: inspectDNS, terms: discoverTerms, install: systemd.Install, start: func(ctx context.Context) error { return systemd.Control(ctx, "start") }, ownState: systemd.OwnStateFile, wait: WaitReady}
 }
 func inspectTailnet(ctx context.Context, socket string, region int) (int, error) {
 	v := tailnet.New(tailnet.Options{Socket: socket})
@@ -147,7 +155,21 @@ func (w *Workflow) Prepare(ctx context.Context, r Request) (Plan, error) {
 	if err != nil {
 		return p, err
 	}
-	if p.Settings.RelayEnabled && p.Settings.Access == config.Tailnet {
+	if r.IdentityPath != "" {
+		if !p.Settings.UsesTailnet() || r.Config.Region == 0 || r.Start {
+			return p, errors.New("身份迁移需要 Tailnet 模式、明确 region 和 --no-start")
+		}
+		p.identity, err = fileio.ReadRegularFile(r.IdentityPath, 16<<10)
+		if err != nil {
+			return p, errors.New("无法读取原 DERP 身份文件")
+		}
+		if _, err = state.DecodeIdentity(p.identity); err != nil {
+			return p, err
+		}
+		if err = w.checkMigrationRegion(ctx, p.Settings); err != nil {
+			return p, err
+		}
+	} else if p.Settings.UsesTailnet() {
 		id, e := w.checkTailnet(ctx, p.Settings.Socket, p.Config.Region)
 		if e != nil {
 			return p, e
@@ -157,11 +179,18 @@ func (w *Workflow) Prepare(ctx context.Context, r Request) (Plan, error) {
 		}
 	}
 	if !w.portAvailable(ctx, p.Settings.ListenHost, p.Settings.Port) {
-		if p.Config.Relay.Listen != "" || !w.portAvailable(ctx, p.Settings.ListenHost, config.AlternatePort) {
+		if len(p.identity) > 0 {
+			if err = w.checkRelayIdentity(ctx, p.Settings, p.identity); err != nil {
+				return p, err
+			}
+			p.ExistingListener = true
+		} else if p.Config.Relay.Listen != "" || !w.portAvailable(ctx, p.Settings.ListenHost, config.AlternatePort) {
 			return p, fmt.Errorf("HTTPS 端口 %d 不可用，请指定可用的 --listen", p.Settings.Port)
 		}
-		p.Config.Relay.Listen = net.JoinHostPort(p.Settings.ListenHost, strconv.Itoa(config.AlternatePort))
-		p.AlternatePort = true
+		if !p.ExistingListener {
+			p.Config.Relay.Listen = net.JoinHostPort(p.Settings.ListenHost, strconv.Itoa(config.AlternatePort))
+			p.AlternatePort = true
+		}
 	}
 	p.Settings, err = Resolve(p.Config, p.Path)
 	if err != nil {
@@ -180,6 +209,18 @@ func (w *Workflow) Prepare(ctx context.Context, r Request) (Plan, error) {
 		if _, err = systemd.Render(systemd.Binary, p.Path, serviceSettings); err != nil {
 			return p, err
 		}
+	}
+	if (r.ImportCertificate == "") != (r.ImportKey == "") {
+		return p, errors.New("导入缓存证书需要同时指定 --import-certificate 与 --import-key")
+	}
+	if r.ImportCertificate != "" {
+		if !p.Settings.AutomaticCertificate() {
+			return p, errors.New("手动证书模式不能同时导入自动证书缓存")
+		}
+		if _, err = certificate.Manual(p.Settings.Domain, r.ImportCertificate, r.ImportKey); err != nil {
+			return p, err
+		}
+		p.importCertificate, p.importKey = r.ImportCertificate, r.ImportKey
 	}
 	if err = daemon.Check(p.Settings); err != nil {
 		return p, err
@@ -273,6 +314,21 @@ func (w *Workflow) Apply(ctx context.Context, p Plan, acceptedTerms bool) error 
 	if string(existing) != string(p.original) {
 		return errors.New("配置在确认后已发生变化，请重新执行 init")
 	}
+	if len(p.identity) > 0 {
+		target := filepath.Join(p.StateDir, "identity.json")
+		existing, e := fileio.ReadRegularFile(target, 16<<10)
+		if e == nil {
+			oldKey, oldErr := state.DecodeIdentity(existing)
+			newKey, _ := state.DecodeIdentity(p.identity)
+			if oldErr != nil || !oldKey.Equal(newKey) {
+				return errors.New("已有节点身份与导入身份不同，拒绝覆盖")
+			}
+		} else if !errors.Is(e, os.ErrNotExist) {
+			return e
+		} else if err = state.WriteFile(target, p.identity, 0600, true); err != nil {
+			return err
+		}
+	}
 	// The managed token always has one fixed path; input token files are sources.
 	p.Config.Cloudflare.TokenFile = ""
 	p.Settings.TokenFile = filepath.Join(filepath.Dir(p.Path), "cloudflare.token")
@@ -334,6 +390,12 @@ func (w *Workflow) Apply(ctx context.Context, p Plan, acceptedTerms bool) error 
 	if err = state.Write(p.Path, b); err != nil {
 		return err
 	}
+
+	if p.importCertificate != "" {
+		if err = certificate.Import(daemon.CertificateOptions(p.Settings, p.StateDir), p.importCertificate, p.importKey); err != nil {
+			return err
+		}
+	}
 	if _, err = store.LoadOrCreateIdentity(); err != nil {
 		return err
 	}
@@ -341,7 +403,11 @@ func (w *Workflow) Apply(ctx context.Context, p Plan, acceptedTerms bool) error 
 		return err
 	}
 	if p.Service {
-		if err = w.install(ctx, p.Path, p.Settings); err != nil {
+		install := w.install
+		if len(p.identity) > 0 {
+			install = w.stage
+		}
+		if err = install(ctx, p.Path, p.Settings); err != nil {
 			return err
 		}
 	}

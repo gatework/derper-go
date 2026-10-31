@@ -82,6 +82,7 @@ NotifyAccess=main
 User=derper-go
 Group=derper-go
 ExecStart=%s run --config %s
+ExecReload=%s config reload --config %s
 %sStateDirectory=derper-go
 StateDirectoryMode=0700
 RuntimeDirectory=derper-go
@@ -111,7 +112,7 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 %s
 [Install]
 WantedBy=multi-user.target
-`, dependency, dependency, b, p, credential, capabilities), nil
+`, dependency, dependency, b, p, b, p, credential, capabilities), nil
 }
 func Check() error {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
@@ -127,7 +128,7 @@ func Check() error {
 }
 func Control(ctx context.Context, action string) error {
 	switch action {
-	case "start", "stop", "restart", "enable":
+	case "start", "stop", "restart", "enable", "disable":
 	default:
 		return errors.New("不支持的服务操作")
 	}
@@ -146,6 +147,14 @@ func Logs(ctx context.Context, out, errOut io.Writer) error {
 
 // Install is invoked only after a durable setup journal and user confirmation.
 func Install(ctx context.Context, path string, s config.Settings) error {
+	return install(ctx, path, s, true)
+}
+
+// Stage installs a migration without enabling a competing service at boot.
+func Stage(ctx context.Context, path string, s config.Settings) error {
+	return install(ctx, path, s, false)
+}
+func install(ctx context.Context, path string, s config.Settings, enable bool) error {
 	if err := Check(); err != nil {
 		return err
 	}
@@ -225,6 +234,9 @@ func Install(ctx context.Context, path string, s config.Settings) error {
 		return err
 	}
 
+	if !enable {
+		return Control(ctx, "disable")
+	}
 	return Control(ctx, "enable")
 }
 func copyExecutable(source, target string) error {

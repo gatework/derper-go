@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,6 +33,7 @@ var (
 type Options struct {
 	Socket              string
 	MaxConcurrentChecks int
+	MaxRequests         int
 }
 type nodeCheck struct {
 	done    chan struct{}
@@ -60,12 +62,16 @@ func New(options Options) *Verifier {
 	if limit <= 0 {
 		limit = DefaultMaxConcurrentChecks
 	}
-	limit = min(limit, maxAdmissionRequests)
+	if options.MaxRequests <= 0 {
+		options.MaxRequests = maxAdmissionRequests
+	}
+	options.MaxRequests = min(options.MaxRequests, 8192)
+	limit = min(limit, 128, options.MaxRequests)
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", options.Socket)
 	}, ResponseHeaderTimeout: admissionTimeout, MaxIdleConns: limit + 2, MaxIdleConnsPerHost: limit + 2, MaxConnsPerHost: limit + 2, IdleConnTimeout: time.Minute}
 	ctx, cancel := context.WithCancel(context.Background())
-	v := &Verifier{client: &local.Client{Socket: options.Socket, UseSocketOnly: true, Transport: transport}, transport: transport, ctx: ctx, cancel: cancel, calls: make(map[key.NodePublic]*nodeCheck), requests: make(chan struct{}, maxAdmissionRequests), checks: make(chan struct{}, limit)}
+	v := &Verifier{client: &local.Client{Socket: options.Socket, UseSocketOnly: true, Transport: transport}, transport: transport, ctx: ctx, cancel: cancel, calls: make(map[key.NodePublic]*nodeCheck), requests: make(chan struct{}, options.MaxRequests), checks: make(chan struct{}, limit)}
 	v.lookup = v.lookupNode
 	return v
 }
@@ -233,4 +239,34 @@ func (v *Verifier) Region(ctx context.Context, requested int) (int, error) {
 
 func (v *Verifier) VerifyClient(ctx context.Context, request tailcfg.DERPAdmitClientRequest) error {
 	return v.VerifyNode(ctx, request.NodePublic)
+}
+
+// ReuseRegion permits explicit migration of one existing node, without replacing
+// a different endpoint or silently discarding peers in a multi-node region.
+func (v *Verifier) ReuseRegion(ctx context.Context, region int, domain string, port int) error {
+	ctx, cancel := v.withTimeout(ctx)
+	defer cancel()
+	m, err := v.client.CurrentDERPMap(ctx)
+	if err != nil {
+		return errors.New("读取迁移区域失败")
+	}
+	if m == nil || m.Regions[tailcfg.DERPRegionID(region)] == nil {
+		return errors.New("迁移区域不存在，请核对 region")
+	}
+	r := m.Regions[tailcfg.DERPRegionID(region)]
+	if len(r.Nodes) != 1 {
+		return errors.New("多节点区域需要人工合并，不能通过单节点迁移覆盖")
+	}
+	n := r.Nodes[0]
+	if n == nil {
+		return errors.New("迁移区域缺少节点")
+	}
+	nodePort := n.DERPPort
+	if nodePort == 0 {
+		nodePort = 443
+	}
+	if n.STUNOnly || !strings.EqualFold(strings.TrimSuffix(n.HostName, "."), domain) || nodePort != port {
+		return errors.New("迁移区域的域名或 HTTPS 端口与本节点不匹配")
+	}
+	return nil
 }

@@ -18,6 +18,7 @@ func (c Config) Effective(base string) (Config, error) {
 	c.Relay.TCP = TCP{Keepalive: ptr(s.TCPKeepalive), UserTimeout: ptr(s.TCPUserTimeout), WriteTimeout: ptr(s.TCPWriteTimeout)}
 	c.HTTP.Port = &s.HTTPPort
 	c.Admission.MaxConcurrentChecks = s.MaxConcurrentChecks
+	c.Admission.MaxRequests = s.MaxAdmissionRequests
 	c.Admission.Timeout = ptr(s.AdmissionTimeout)
 	c.Admission.FailOpen = &s.AdmissionFailOpen
 	c.Admission.BlockedApps = s.BlockedApps

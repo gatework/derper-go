@@ -22,11 +22,15 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 	fs.SetOutput(ui.err)
 	path, dir, tokenFile := config.DefaultPath, "", ""
 	var input config.Config
+	var identityPath, importCert, importKey string
 	httpPort := -1
 	yes, accept, noService, noStart, noDNS, noSTUN := false, false, false, false, false, false
 	fs.StringVar(&path, "config", path, "配置文件")
 	fs.StringVar(&path, "c", path, "配置文件")
 	fs.StringVar(&dir, "state-dir", "", "状态目录（仅前台部署可覆盖）")
+	fs.StringVar(&identityPath, "identity", "", "迁移原 DERP 身份文件；必须配合 --region 和 --no-start")
+	fs.StringVar(&importCert, "import-certificate", "", "导入有效证书链，继续使用自动续期")
+	fs.StringVar(&importKey, "import-key", "", "导入证书的私钥文件")
 	fs.StringVar(&input.Domain, "domain", "", "中继域名，例如 relay.example.com")
 	fs.StringVar(&input.Email, "email", "", "证书联系邮箱")
 	fs.StringVar(&tokenFile, "token-file", "", "Cloudflare API Token 文件（也可使用 CLOUDFLARE_API_TOKEN 环境变量）")
@@ -213,12 +217,12 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 		}
 	}
 	workflow := setup.New()
-	plan, err := workflow.Prepare(ctx, setup.Request{Config: c, Path: path, StateDir: dir, Token: token, Service: !noService, Start: !noStart && !noService})
+	plan, err := workflow.Prepare(ctx, setup.Request{Config: c, Path: path, StateDir: dir, Token: token, Service: !noService, Start: !noStart && !noService, IdentityPath: identityPath, ImportCertificate: importCert, ImportKey: importKey})
 	if err != nil {
 		return failure(ui, err)
 	}
 	fmt.Fprintf(ui.out, "\n安装摘要\n域名：%s\nHTTPS：%s\n准入模式：%s\n中继区域：%d\n配置：%s\n状态：%s\n", plan.Settings.Domain, plan.Settings.HTTPSAddress(), plan.Settings.Access, plan.Settings.Region, path, dir)
-	if plan.Settings.RelayEnabled && plan.Settings.Access == config.Controller {
+	if plan.Settings.RelayEnabled && plan.Settings.UsesController() {
 		endpoint, _ := url.Parse(plan.Settings.AdmissionURL)
 		endpoint.RawQuery = "" // Query parameters may contain an operator-provided secret.
 		policy := "拒绝接入"
@@ -229,6 +233,9 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 	}
 	if plan.Settings.MeshKeyFile != "" {
 		fmt.Fprintf(ui.out, "节点互联：已设置密钥，%d 个出站节点\n", len(plan.Settings.MeshPeers))
+	}
+	if plan.ExistingListener {
+		fmt.Fprintln(ui.out, "迁移：已核对原中继身份；安装后先停止旧服务，再启动 derper-go，不自动交接端口。")
 	}
 	if plan.AlternatePort {
 		fmt.Fprintln(ui.out, "443 不可用，本次将保存并使用 :8443。")
@@ -265,7 +272,11 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 	if noService {
 		fmt.Fprintf(ui.out, "配置已准备。运行：derper-go run --config %q --state-dir %q\n", path, dir)
 	} else if noStart {
-		fmt.Fprintln(ui.out, "服务已安装。启动：sudo derper-go service start")
+		if identityPath != "" {
+			fmt.Fprintln(ui.out, "迁移已准备，未启用新服务的开机启动。停止并禁用原服务后：sudo systemctl enable --now derper-go.service")
+		} else {
+			fmt.Fprintln(ui.out, "服务已安装。启动：sudo derper-go service start")
+		}
 	} else if !plan.Settings.RelayEnabled {
 		fmt.Fprintln(ui.out, "HTTPS 服务已就绪，DERP 已关闭；使用 status 检查引导 DNS 缓存。")
 	} else {

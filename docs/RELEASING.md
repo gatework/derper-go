@@ -4,7 +4,7 @@
 
 ## 发布一个版本
 
-先将代码合并或推送到 `main`，确认普通 CI 通过，然后在对应提交创建并推送标签：
+先为目标版本填写 `CHANGELOG.md`（预发布可复用对应正式版的条目），再将代码合并或推送到 `main`，确认普通 CI 通过，然后在对应提交创建并推送标签：
 
 ```sh
 git switch main
@@ -21,7 +21,7 @@ git push origin v0.1.0
 
 每次发布执行：
 
-1. 校验标签格式、提交 SHA 和 `main` 归属。
+1. 校验标签格式、提交 SHA、`main` 归属和非空的版本变更记录。
 2. 工作流语法、发布故障恢复测试、Go 格式/模块检查、race、vet 和可达漏洞扫描。
 3. 在对应原生 runner 上构建并运行 Linux amd64、arm64 二进制，校验 CLI 版本、完整提交 SHA、ELF 架构与静态链接。
 4. 重建 amd64 包并逐字节比较，检查归档可复现性。
@@ -37,7 +37,7 @@ derper-go_v0.1.0_linux_arm64.tar.gz
 checksums.txt
 ```
 
-每个归档包含程序、README、配置示例、部署说明、许可证、`go.mod`、`go.sum` 和 `build-info.json`。元数据记录版本、完整提交、Go 版本、操作系统、架构及源码提交时间。编译使用 `CGO_ENABLED=0`、`-trimpath`，归档排序、属主、权限、时间和 gzip 头均固定。
+每个归档包含程序、README、CHANGELOG、配置示例、部署说明、许可证、`go.mod`、`go.sum` 和 `build-info.json`。元数据记录版本、完整提交、Go 版本、操作系统、架构及源码提交时间。编译使用 `CGO_ENABLED=0`、`-trimpath`，归档排序、属主、权限、时间和 gzip 头均固定。
 
 普通 CI 也保留两个发行归档 14 天，可在 Actions 页面下载。其版本为 `dev`，包含对应提交标识。
 

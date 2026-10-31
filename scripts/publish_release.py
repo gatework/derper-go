@@ -129,8 +129,31 @@ def fingerprint(assets):
     return sorted((item["id"], item["name"], item["size"], item["state"]) for item in assets)
 
 
+def changelog_notes(tag, path=None):
+    validate_version(tag)
+    path = Path(path) if path is not None else Path(__file__).resolve().parents[1] / "CHANGELOG.md"
+    base = re.match(r"v[0-9]+\.[0-9]+\.[0-9]+", tag)[0]
+    sections = {}
+    current = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("## "):
+            current = line[3:].strip()
+            if current in sections:
+                raise ValueError("duplicate changelog version")
+            sections[current] = []
+        elif current is not None:
+            sections[current].append(line)
+    notes = "\n".join(sections.get(tag, sections.get(base, []))).strip()
+    if not notes:
+        raise ValueError("release version needs a non-empty CHANGELOG.md entry")
+    return notes
+
+
 def release_notes(tag, commit, repository):
-    return f"""Linux amd64 / arm64 静态二进制，包含配置示例、部署说明和依赖许可证。
+    changes = changelog_notes(tag)
+    return f"""{changes}
+
+""" + f"""Linux amd64 / arm64 静态二进制，包含配置示例、部署说明和依赖许可证。
 
 构建提交：`{commit}`。两个架构均经过原生运行检查，amd64 发行包通过隔离 systemd 安装与重启测试。
 

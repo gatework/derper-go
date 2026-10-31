@@ -38,11 +38,11 @@ const help = `用法：derper-go <命令> [选项]
   tailnet config        输出 Tailnet 策略配置片段
 
 进阶命令：
-  config show|check     查看最小配置或检查配置与本地证书
+  config show|check|reload     查看最小配置或检查配置与本地证书
   certificate status|import|renew
                         检查、导入或续签离线证书缓存
   dns plan|apply        预览域名记录变更，确认后发布
-  service render|start|stop|restart|logs
+  service render|start|stop|restart|reload|logs
                         管理 derper-go.service
   version               查看程序与 Tailscale 版本
 
@@ -121,7 +121,7 @@ func execute(ctx context.Context, args []string, ui terminal) (code int) {
 		name += "/" + rest[0]
 		rest = rest[1:]
 	}
-	valid := map[string]bool{"run": true, "status": true, "doctor": true, "tailnet/config": true, "config/show": true, "config/check": true, "certificate/status": true, "certificate/import": true, "certificate/renew": true, "dns/plan": true, "dns/apply": true, "service/render": true, "service/start": true, "service/stop": true, "service/restart": true, "service/logs": true}
+	valid := map[string]bool{"run": true, "status": true, "doctor": true, "tailnet/config": true, "config/show": true, "config/check": true, "config/reload": true, "certificate/status": true, "certificate/import": true, "certificate/renew": true, "dns/plan": true, "dns/apply": true, "service/render": true, "service/start": true, "service/stop": true, "service/restart": true, "service/reload": true, "service/logs": true}
 	if !valid[name] {
 		fmt.Fprintf(ui.err, "未知命令：%s\n", name)
 		return 2
@@ -173,6 +173,13 @@ func execute(ctx context.Context, args []string, ui terminal) (code int) {
 	if err != nil {
 		return failure(ui, err)
 	}
+	if name == "config/reload" || name == "service/reload" {
+		err := daemon.Reload(ctx, dir)
+		if err == nil {
+			fmt.Fprintln(ui.out, "配置已重载，现有中继连接保持运行。")
+		}
+		return result(ui, err)
+	}
 	if strings.HasPrefix(name, "service/") && name != "service/render" {
 		if path != config.DefaultPath || dir != config.DefaultDataDir {
 			return failure(ui, errors.New("service 命令管理标准路径下的 derper-go.service；自定义单元请使用 systemctl"))
@@ -223,7 +230,7 @@ func execute(ctx context.Context, args []string, ui terminal) (code int) {
 	}
 	switch name {
 	case "run":
-		err = daemon.Run(ctx, s, dir, logger)
+		err = daemon.RunFile(ctx, s, dir, path, logger)
 	case "status":
 		err = showStatus(ui, dir, jsonOutput)
 	case "config/show":

@@ -40,7 +40,11 @@ func (s *Server) bindVerifier(ctx context.Context, verifier ClientVerifier, time
 			http.Error(w, "invalid admission request", http.StatusBadRequest)
 			return
 		}
-		lookup, cancel := context.WithTimeout(r.Context(), timeout)
+		budget := s.policy.Load().AdmissionTimeout
+		if budget == 0 {
+			budget = timeout
+		}
+		lookup, cancel := context.WithTimeout(r.Context(), budget)
 		defer cancel()
 		allow := verifier.VerifyClient(lookup, req) == nil
 		w.Header().Set("Content-Type", "application/json")

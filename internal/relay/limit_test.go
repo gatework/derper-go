@@ -94,3 +94,25 @@ func TestConnectionBurstAndRateRefill(t *testing.T) {
 		}
 	})
 }
+
+func TestReloadDoesNotGrantAnotherBurstOrEvictConnections(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		quota := &connectionLimit{limit: 8}
+		quota.setRate(1, 2)
+		if !quota.acquire() || !quota.acquire() {
+			t.Fatal("initial burst rejected")
+		}
+		quota.update(1, 1, 2)
+		if quota.acquire() || quota.stats().Active != 2 {
+			t.Fatal("reload evicted or ignored limit")
+		}
+		quota.update(8, 1, 2)
+		if quota.acquire() {
+			t.Fatal("reload reset the token balance")
+		}
+		time.Sleep(time.Second)
+		if !quota.acquire() {
+			t.Fatal("rate did not refill after reload")
+		}
+	})
+}

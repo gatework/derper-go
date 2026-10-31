@@ -42,9 +42,10 @@ HTTPS 始终使用 TLS。上游根据端口自动选择明文 HTTP 的行为不�
 |---|---|---|
 | `admission.mode` | `tailnet` | `tailnet` 通过现有 tailscaled 验证；`controller` 使用外部准入服务；`public` 公开接入 |
 | `tailscale.socket` | `/run/tailscale/tailscaled.sock` | 本地 tailscaled socket，仅 Tailnet 模式使用 |
-| `admission.max_concurrent_checks` | `32` | 并行查询数，1–128；进行中和排队的请求总上限固定为 128 |
+| `admission.max_concurrent_checks` | `32` | 并行查询数，1–128；不大于请求总额度，未指定时取 32 与总额度的较小值 |
+| `admission.max_requests` | `128` | 进行中及排队请求总额度，1–8192；组合准入的两阶段共享此额度 |
 | `admission.timeout` | `3s` | 排队和查询共用总预算，范围 `100ms` 至 `3s` |
-| `admission.url` | 无 | 控制器地址；填写时未指定模式会选择 `controller`。远端必须 HTTPS，本机回环允许 HTTP |
+| `admission.url` | 无 | 控制器地址；填写时未指定模式会选择 `controller`；显式 `mode:tailnet` 时先查 Tailnet，再查控制器，两阶段共用 timeout。远端必须 HTTPS，本机回环允许 HTTP |
 | `admission.fail_open` | `false` | 控制器故障时是否允许接入；仅作用于外部控制器故障，明确拒绝、主动取消和本地额度耗尽仍拒绝；控制器网络超时属于可按该选项处理的服务故障 |
 | `admission.blocked_apps` | 空列表 | 拒绝客户端自行声明的应用名称，区分大小写；可信 Mesh 节点按上游规则豁免 |
 
@@ -121,3 +122,11 @@ HTTPS 始终使用 TLS。上游根据端口自动选择明文 HTTP 的行为不�
 | `-c/-version` | `--config`、`version` |
 
 本轮范围为常用生产功能。ACE、GCP/EAB、IP 短期证书、setec 和实验性 `rate-config` 未开放为配置；严格校验会拒绝这些字段。现有 Cloudflare DNS-01 自动证书和域名记录发布继续独立运行。
+
+## 安全热重载
+
+修改配置后执行 `sudo derper-go service reload` 或 `sudo systemctl reload derper-go`。前台实例使用 `derper-go config reload -c config.json`，也接受 SIGHUP。命令等待守护进程确认，失败时返回原因，原运行配置继续有效。控制通道为服务私有目录中的 0600 Unix socket，不向公网开放。
+
+可以热更新 `relay.max_connections`、`relay.connection_rate`、`relay.homepage`、`admission.timeout`、已有控制器的 `url/fail_open`，以及手动证书内容/路径。降低连接上限不关闭已有连接；仅阻止超过新额度的新连接。进行中的授权查询沿用原控制器快照；自动证书续期仍由原维护循环负责。
+
+所有值及手动证书通过检查后才应用；部分写入的证书/密钥、非法配置或结构性变更均拒绝应用。监听、准入模式、增删控制器、请求/并行额度、Mesh、bootstrap DNS、DNS 发布、CA 和凭据来源变更需要 `service restart`。重载不会刷新 systemd 的 LoadCredential 副本，Token 轮换仍需重启。
