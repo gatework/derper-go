@@ -17,7 +17,6 @@ import (
 
 	"golang.org/x/crypto/acme"
 
-	"github.com/gatework/derper-go/internal/certificate"
 	"github.com/gatework/derper-go/internal/cloudflare"
 	"github.com/gatework/derper-go/internal/config"
 	"github.com/gatework/derper-go/internal/daemon"
@@ -159,7 +158,7 @@ func (w *Workflow) Prepare(ctx context.Context, r Request) (Plan, error) {
 	}
 	if !w.portAvailable(ctx, p.Settings.ListenHost, p.Settings.Port) {
 		if p.Config.Relay.Listen != "" || !w.portAvailable(ctx, p.Settings.ListenHost, config.AlternatePort) {
-			return p, fmt.Errorf("HTTPS 端口 %d 已被占用，请指定可用的 --listen", p.Settings.Port)
+			return p, fmt.Errorf("HTTPS 端口 %d 不可用，请指定可用的 --listen", p.Settings.Port)
 		}
 		p.Config.Relay.Listen = net.JoinHostPort(p.Settings.ListenHost, strconv.Itoa(config.AlternatePort))
 		p.AlternatePort = true
@@ -182,10 +181,8 @@ func (w *Workflow) Prepare(ctx context.Context, r Request) (Plan, error) {
 			return p, err
 		}
 	}
-	if !p.Settings.AutomaticCertificate() {
-		if _, err = certificate.Manual(p.Settings.Domain, p.Settings.CertificateFile, p.Settings.CertificateKey); err != nil {
-			return p, err
-		}
+	if err = daemon.Check(p.Settings); err != nil {
+		return p, err
 	}
 	if p.Settings.NeedsCloudflare() {
 		p.token, err = cloudflare.ValidateToken(p.token)

@@ -218,7 +218,7 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 	}
 	fmt.Fprintf(ui.out, "\n安装摘要\n域名：%s\nHTTPS：%s\n准入模式：%s\n中继区域：%d\n配置：%s\n状态：%s\n", plan.Settings.Domain, plan.Settings.HTTPSAddress(), plan.Settings.Access, plan.Settings.Region, path, dir)
 	if plan.AlternatePort {
-		fmt.Fprintln(ui.out, "443 已被占用，本次将保存并使用 8443。")
+		fmt.Fprintln(ui.out, "443 不可用，本次将保存并使用 :8443。")
 	}
 	if plan.Service {
 		if plan.Start {
@@ -253,6 +253,8 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 		fmt.Fprintf(ui.out, "配置已准备。运行：derper-go run --config %q --state-dir %q\n", path, dir)
 	} else if noStart {
 		fmt.Fprintln(ui.out, "服务已安装。启动：sudo derper-go service start")
+	} else if !plan.Settings.RelayEnabled {
+		fmt.Fprintln(ui.out, "HTTPS 服务已就绪，DERP 已关闭；使用 status 检查引导 DNS 缓存。")
 	} else {
 		fmt.Fprintln(ui.out, "中继已就绪。下一步：derper-go tailnet config，将输出片段合并到 Tailnet 策略。")
 	}

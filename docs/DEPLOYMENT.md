@@ -80,7 +80,7 @@ Cloudflare Token 轮换时原子替换凭据文件。前台运行按请求重读
 - 不重新执行签发、创建身份或接管 DNS。`identity.json`、证书缓存、DNS 归属与安装日志保持兼容。旧版不会处理新的清理退避日志，遇到限流时优先修复或等待，不应立即回退重试。
 - systemd 新增 `RuntimeDirectory=derper-go`；状态移到 `/run/derper-go/status.json`，读取器仍兼容旧位置。服务停止后运行目录可被 systemd 清理；持久状态不受影响。
 - 新单元移除了固定 `GOMEMLIMIT=96MiB`。需要内存预算时，通过 `systemctl edit derper-go` 的 `[Service]` / `Environment=GOMEMLIMIT=256MiB` 设置，并根据连接规模与实际 GC 数据调整。该值只是示例，不能替代容量验证。
-- gz 的 `10-credentials.conf` 兼容覆盖文件与新单元中的无引号 `LoadCredential` 一致，可先保留。确认新单元已生效且凭据读取成功后再安排清理覆盖文件；不要删除 Token 或更改其权限。
+- 升级时检查并移除 gz 专为 v0.1.0 修补凭据路径的 `10-credentials.conf`，使用新程序生成的完整凭据列表。旧覆盖文件中的空 `LoadCredential=` 会清空新增的 Mesh 等凭据；仅移除这项已知旧修补，不删除 Token、Mesh 密钥或其他用户设置。
 - 已批准、处于 `prepared` 的系统服务安装可通过再次执行 `init` 继续启动。`--no-start` / `--no-service` 仍保留其原有意图；恢复前核对配置与已批准安装一致。
 
 升级后核对身份、公钥、证书、DNS 归属和 Tailnet 区域保持一致，再从两台授权设备验证实际转发。gz 的固定 IPv4 和 sing-box 回包路由继续保留，不能改为通过代理出口自动发现地址。

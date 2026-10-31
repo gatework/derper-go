@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http/httptest"
 	"net/netip"
 	"sync/atomic"
@@ -81,7 +82,11 @@ func TestRolloutFailClosedAndStableSourceSelection(t *testing.T) {
 		if matches(remote, 0) || !matches(remote, 100) {
 			t.Fatal("percentage boundary")
 		}
-		if matches(remote, 50) != matches(remote, 50) {
+		host, _, err := net.SplitHostPort(remote)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if matches(remote, 50) != matches(net.JoinHostPort(host, "65535"), 50) {
 			t.Fatal("unstable assignment")
 		}
 	}

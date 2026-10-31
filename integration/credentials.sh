@@ -60,10 +60,5 @@ systemctl daemon-reload
 systemctl start "$unit"
 test "$(systemctl show "$unit" -p Result --value)" = success
 test "$(stat -c '%a:%U' "$work/cloudflare.token")" = 600:root
-# Verify the v0.1.0 gz credential override remains compatible during upgrade.
-mkdir -p "/run/systemd/system/$unit.d"
-printf '[Service]\nLoadCredential=\nLoadCredential=cloudflare-token:%s/cloudflare.token\n' "$work" > "/run/systemd/system/$unit.d/10-credentials.conf"
-systemctl daemon-reload
-systemctl start "$unit"
-test "$(systemctl show "$unit" -p Result --value)" = success
+test "$(stat -c '%a:%U' "$work/mesh.key")" = 600:root
 printf 'Rendered systemd unit loaded the root-only credential successfully.\n'

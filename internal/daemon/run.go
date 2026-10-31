@@ -151,7 +151,11 @@ func Run(parent context.Context, s config.Settings, dir string, logger *slog.Log
 		<-done
 		return err
 	}
-	if err = systemd.Notify("READY=1\nSTATUS=TLS 与 DERP 中继已就绪"); err != nil {
+	message := "HTTPS 与 DERP 中继已就绪"
+	if !s.RelayEnabled {
+		message = "HTTPS 服务已就绪，DERP 已关闭"
+	}
+	if err = systemd.Notify("READY=1\nSTATUS=" + message); err != nil {
 		cancel()
 		<-done
 		return err

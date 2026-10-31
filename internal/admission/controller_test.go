@@ -90,7 +90,7 @@ func TestControllerCancellationAlwaysFailsClosed(t *testing.T) {
 func TestControllerDoesNotFollowRedirects(t *testing.T) {
 	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("redirect followed") }))
 	defer redirect.Close()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, redirect.URL, 302) }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, redirect.URL, http.StatusFound) }))
 	defer server.Close()
 	controller := New(Options{URL: server.URL, Timeout: time.Second})
 	defer controller.Close()

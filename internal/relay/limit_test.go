@@ -81,7 +81,8 @@ func TestConnectionBurstAndRateRefill(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		quota := &connectionLimit{limit: 100}
 		quota.setRate(2, 2)
-		if !quota.acquire() || !quota.acquire() || quota.acquire() {
+		first, second, third := quota.acquire(), quota.acquire(), quota.acquire()
+		if !first || !second || third {
 			t.Fatal("burst policy")
 		}
 		time.Sleep(500 * time.Millisecond)
