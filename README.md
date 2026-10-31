@@ -135,3 +135,5 @@ MIT 许可；上游来源及许可证见 [NOTICE](NOTICE)。
 
 
 运行参数已按领域统一，详见 [配置参考](docs/CONFIGURATION.md)。使用 `config show --effective` 查看默认值；监听地址、准入控制器、Mesh 和 bootstrap DNS 均使用结构化设置。旧的顶层 `port`、`access`、`captive_portal` 和 `tailscale.max_concurrent_checks` 已移除，请按配置参考转换后运行 `config check`。
+
+本轮审查问题、修复验证与 1,000 连接实测数据见 [代码审查记录](docs/REVIEW.md)。
