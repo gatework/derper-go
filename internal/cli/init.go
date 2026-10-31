@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -217,6 +218,18 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 		return failure(ui, err)
 	}
 	fmt.Fprintf(ui.out, "\n安装摘要\n域名：%s\nHTTPS：%s\n准入模式：%s\n中继区域：%d\n配置：%s\n状态：%s\n", plan.Settings.Domain, plan.Settings.HTTPSAddress(), plan.Settings.Access, plan.Settings.Region, path, dir)
+	if plan.Settings.RelayEnabled && plan.Settings.Access == config.Controller {
+		endpoint, _ := url.Parse(plan.Settings.AdmissionURL)
+		endpoint.RawQuery = "" // Query parameters may contain an operator-provided secret.
+		policy := "拒绝接入"
+		if plan.Settings.AdmissionFailOpen {
+			policy = "允许接入"
+		}
+		fmt.Fprintf(ui.out, "准入控制器：%s\n控制器故障时：%s\n", endpoint.String(), policy)
+	}
+	if plan.Settings.MeshKeyFile != "" {
+		fmt.Fprintf(ui.out, "节点互联：已设置密钥，%d 个出站节点\n", len(plan.Settings.MeshPeers))
+	}
 	if plan.AlternatePort {
 		fmt.Fprintln(ui.out, "443 不可用，本次将保存并使用 :8443。")
 	}

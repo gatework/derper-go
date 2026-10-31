@@ -325,6 +325,9 @@ func (h *health) watch(server *relay.Server, verifier *tailnet.Verifier, control
 		h.status.Relay.State = "disabled"
 	}
 	h.status.Mesh = Component{State: "disabled"}
+	if s.MeshKeyFile != "" {
+		h.status.Mesh = Component{State: "ready", Detail: "仅接收入站互联"}
+	}
 	h.status.Bootstrap = Component{State: "disabled"}
 	if len(s.BootstrapNames)+len(s.BootstrapUnlisted) > 0 {
 		h.status.Bootstrap.State = "pending"

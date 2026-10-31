@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -86,7 +87,11 @@ func TestDaemonReadyBeforeDNSFailureAndNotify(t *testing.T) {
 	defer notify.Close()
 	t.Setenv("NOTIFY_SOCKET", socket)
 	t.Setenv("CREDENTIALS_DIRECTORY", "")
-	s := config.Settings{RelayEnabled: true, HTTPPort: -1, Domain: "relay.example.com", Port: port, Region: 900, Access: config.Public, CertificateFile: certPath, CertificateKey: keyPath, PublishDNS: true, TokenFile: filepath.Join(dir, "missing-token")}
+	meshPath := filepath.Join(dir, "mesh.key")
+	if err := os.WriteFile(meshPath, []byte(strings.Repeat("ab", 32)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := config.Settings{MeshKeyFile: meshPath, RelayEnabled: true, HTTPPort: -1, Domain: "relay.example.com", Port: port, Region: 900, Access: config.Public, CertificateFile: certPath, CertificateKey: keyPath, PublishDNS: true, TokenFile: filepath.Join(dir, "missing-token")}
 	s.IPv4, _ = config.Address("192.0.2.1", true)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -107,6 +112,9 @@ func TestDaemonReadyBeforeDNSFailureAndNotify(t *testing.T) {
 	for {
 		status, e := ReadStatus(filepath.Join(dir, "state"))
 		if e == nil && status.DNS.State == "degraded" {
+			if status.Mesh.State != "ready" || status.Mesh.Detail != "仅接收入站互联" {
+				t.Fatal("inbound mesh reported disabled", status.Mesh)
+			}
 			if !status.Active || !status.Ready {
 				t.Fatal("DNS failure killed relay", status)
 			}
