@@ -86,7 +86,7 @@ func TestDaemonReadyBeforeDNSFailureAndNotify(t *testing.T) {
 	defer notify.Close()
 	t.Setenv("NOTIFY_SOCKET", socket)
 	t.Setenv("CREDENTIALS_DIRECTORY", "")
-	s := config.Settings{Domain: "relay.example.com", Port: port, Region: 900, Access: config.Public, CertificateFile: certPath, CertificateKey: keyPath, PublishDNS: true, TokenFile: filepath.Join(dir, "missing-token")}
+	s := config.Settings{RelayEnabled: true, HTTPPort: -1, Domain: "relay.example.com", Port: port, Region: 900, Access: config.Public, CertificateFile: certPath, CertificateKey: keyPath, PublishDNS: true, TokenFile: filepath.Join(dir, "missing-token")}
 	s.IPv4, _ = config.Address("192.0.2.1", true)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

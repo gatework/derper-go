@@ -14,7 +14,10 @@ import (
 // bindVerifier uses the upstream admission hook so local API queries have a
 // deadline and are canceled at shutdown. The upstream direct local-client path
 // has neither an HTTP timeout nor a cancelable context after native HTTP hijack.
-func (s *Server) bindVerifier(ctx context.Context, verifier NodeVerifier) error {
+func (s *Server) bindVerifier(ctx context.Context, verifier ClientVerifier, timeout time.Duration) error {
+	if timeout == 0 {
+		timeout = 3 * time.Second
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -37,9 +40,9 @@ func (s *Server) bindVerifier(ctx context.Context, verifier NodeVerifier) error 
 			http.Error(w, "invalid admission request", http.StatusBadRequest)
 			return
 		}
-		lookup, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		lookup, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
-		allow := verifier.VerifyNode(lookup, req.NodePublic) == nil
+		allow := verifier.VerifyClient(lookup, req) == nil
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(tailcfg.DERPAdmitClientResponse{Allow: allow})
 	})}

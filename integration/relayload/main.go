@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -155,8 +156,23 @@ func serve(ctx context.Context) error {
 	})}
 	go localAPI.Serve(listener)
 	defer localAPI.Close()
-	off := false
-	c := config.Config{Domain: "relay.test", Port: 19443, Access: config.Tailnet, Certificate: config.Certificate{File: "cert.pem", Key: "key.pem"}, DNS: config.DNS{Publish: &off}, STUN: config.STUN{Enabled: &off}, Tailscale: config.Tailscale{Socket: socket}}
+	// Build the same workload against both configuration schemas. Reflection
+	// is confined to this cross-revision fixture, never the application.
+	values := map[string]any{"domain": "relay.test", "certificate": map[string]string{"file": "cert.pem", "key": "key.pem"}, "dns": map[string]bool{"publish": false}, "stun": map[string]bool{"enabled": false}, "tailscale": map[string]string{"socket": socket}}
+	if _, legacy := reflect.TypeOf(config.Config{}).FieldByName("Port"); legacy {
+		values["port"], values["access"] = 19443, "tailnet"
+	} else {
+		values["relay"] = map[string]string{"listen": ":19443"}
+		values["admission"] = map[string]string{"mode": "tailnet"}
+	}
+	raw, err := json.Marshal(values)
+	if err != nil {
+		return err
+	}
+	c, err := config.Decode(raw)
+	if err != nil {
+		return err
+	}
 	settings, err := c.Resolve(dir)
 	if err != nil {
 		return err

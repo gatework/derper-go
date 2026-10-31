@@ -61,9 +61,9 @@ Token 也可通过 `CLOUDFLARE_API_TOKEN` 传入，不支持明文 Token 命令�
 
 | 可选字段 | 默认与含义 |
 | --- | --- |
-| `port` | 443；初始化可保存建议的 8443 |
-| `region` | 900；初始化从本机 DERPMap 的 900–999 中选择空闲编号并保存 |
-| `access` | `tailnet`；显式 `public` 才允许公开接入 |
+| `relay.listen` | `:443`；初始化可保存建议的 `:8443` |
+| `region` | 900；Tailnet 模式初始化时从本机 DERPMap 的 900–999 中选择空闲编号并保存 |
+| `admission.mode` | `tailnet`；可选 `controller` 或显式 `public` |
 | `certificate.ca` | `letsencrypt`；可选 `staging` 或 HTTPS ACME 目录 |
 | `certificate.file`、`certificate.key` | 同时提供时使用手动 PEM 证书，邮箱可省略；手动证书更新后重启 |
 | `dns.publish` | `true`；设置 `false` 关闭 A/AAAA 发布，ACME TXT 仍独立维护 |
@@ -73,7 +73,7 @@ Token 也可通过 `CLOUDFLARE_API_TOKEN` 传入，不支持明文 Token 命令�
 | `cloudflare.zone` | 自动发现；必要时填写 Zone ID |
 | `cloudflare.token_file` | 配置目录下的 `cloudflare.token`；可指定其他凭据文件 |
 | `stun.enabled`、`stun.port` | `true`、3478 |
-| `captive_portal` | `false`；开启后监听 HTTP 80 的 `/generate_204` |
+| `http.port` | `-1`；启用后监听指定 HTTP 端口的 `/generate_204` |
 | `log_level` | `info`；可用 `debug`、`warn`、`error` |
 
 IPv4 探测依次使用 ipify 和 AWS Check IP 的 HTTPS 接口，强制 IPv4、限制超时和响应大小。探测失败保留此前记录；不会自动发布探测到的 IPv6。动态 IPv4 的 Tailnet 配置使用域名解析，不写死探测结果。
@@ -125,10 +125,13 @@ MIT 许可；上游来源及许可证见 [NOTICE](NOTICE)。
 ```json
 {
   "relay": { "max_connections": 2048 },
-  "tailscale": { "max_concurrent_checks": 32 }
+  "admission": { "max_concurrent_checks": 32 }
 }
 ```
 
 上述片段合并到现有配置；域名、邮箱等原有设置继续有效。连接数可设为 1–60000，并行查询可设为 1–128，省略或 0 使用默认值。上限保护资源，并不承诺达到对应连接数时的吞吐。
 
 `status --json` 增加运行阶段、连接数、准入计数和 `certificate_cleanup`。启动签证期间每 10 秒持续心跳；超过 30 秒未更新会标记过期。服务状态放在 `/run/derper-go`，自定义前台部署放在状态目录下的 `run/`；身份、证书及恢复日志继续保存在原位置。
+
+
+运行参数已按领域统一，详见 [配置参考](docs/CONFIGURATION.md)。使用 `config show --effective` 查看默认值；监听地址、准入控制器、Mesh 和 bootstrap DNS 均使用结构化设置。旧的顶层 `port`、`access`、`captive_portal` 和 `tailscale.max_concurrent_checks` 已移除，请按配置参考转换后运行 `config check`。

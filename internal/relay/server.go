@@ -13,25 +13,38 @@ import (
 	"time"
 
 	"tailscale.com/derp/derpserver"
+	"tailscale.com/net/ktimeout"
 	"tailscale.com/net/stunserver"
+	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 )
 
 type CertificateSource func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 
 // Options describes relay listeners and admission, independent of user configuration.
+type TCPOptions struct{ Keepalive, UserTimeout, WriteTimeout time.Duration }
 type Options struct {
+	Disabled                   bool
+	Homepage                   string
+	TCP                        *TCPOptions
+	ConnectionRate             float64
+	ConnectionBurst            int
+	BlockedApps                []string
+	AdmissionTimeout           time.Duration
+	Mesh                       *MeshOptions
+	Bootstrap                  http.Handler
 	Domain, Listen, STUNListen string
 	STUNEnabled                bool
 	MaxConnections             int
-	HTTPPort                   int          // -1 disables the captive-portal probe listener.
-	Verifier                   NodeVerifier // nil explicitly permits public clients.
+	HTTPPort                   int            // -1 disables the captive-portal probe listener.
+	Verifier                   ClientVerifier // nil explicitly permits public clients.
 }
-type NodeVerifier interface {
-	VerifyNode(context.Context, key.NodePublic) error
+type ClientVerifier interface {
+	VerifyClient(context.Context, tailcfg.DERPAdmitClientRequest) error
 }
 
 type Server struct {
+	mesh        meshState
 	ready       chan struct{}
 	connections *connectionLimit
 
@@ -68,13 +81,30 @@ func Bind(parent context.Context, c Options, identity key.NodePrivate, certifica
 	}
 	s.core = derpserver.New(identity, logf)
 	s.core.SetVerifyClientURLFailOpen(false)
+	tcp := TCPOptions{Keepalive: 10 * time.Minute, UserTimeout: 15 * time.Second, WriteTimeout: derpserver.DefaultTCPWiteTimeout}
+	if c.TCP != nil {
+		tcp = *c.TCP
+	}
+	s.core.SetTCPWriteTimeout(tcp.WriteTimeout)
+	s.core.SetDisallowedAppNames(c.BlockedApps)
+	if c.ConnectionRate > 0 {
+		s.connections.setRate(c.ConnectionRate, c.ConnectionBurst)
+	}
+	if err = s.prepareMesh(c.Mesh, logger, ctx); err != nil {
+		return nil, err
+	}
 	if c.Verifier != nil {
-		if err = s.bindVerifier(ctx, c.Verifier); err != nil {
+		if err = s.bindVerifier(ctx, c.Verifier, c.AdmissionTimeout); err != nil {
 			return nil, err
 		}
 	}
 	mux := http.NewServeMux()
-	mux.Handle("/derp", derpserver.AddWebSocketSupport(s.core, derpserver.Handler(s.core)))
+	if !c.Disabled {
+		mux.Handle("/derp", derpserver.AddWebSocketSupport(s.core, derpserver.Handler(s.core)))
+	}
+	if c.Bootstrap != nil {
+		mux.Handle("/bootstrap-dns", c.Bootstrap)
+	}
 	mux.HandleFunc("/derp/probe", derpserver.ProbeHandler)
 	mux.HandleFunc("/derp/latency-check", derpserver.ProbeHandler)
 	mux.HandleFunc("/generate_204", derpserver.ServeNoContent)
@@ -83,15 +113,26 @@ func Bind(parent context.Context, c Options, identity key.NodePrivate, certifica
 			http.NotFound(w, r)
 			return
 		}
+		if c.Homepage != "" && c.Homepage != "blank" {
+			http.Redirect(w, r, c.Homepage, http.StatusFound)
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 	})
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: certificate, NextProtos: []string{"http/1.1"}}
-	s.core.ModifyTLSConfigToAddMetaCert(tlsConfig)
+	if !c.Disabled {
+		s.core.ModifyTLSConfigToAddMetaCert(tlsConfig)
+	}
 	protocols := new(http.Protocols)
 	protocols.SetHTTP1(true)
 	s.tlsServer = &http.Server{Handler: mux, TLSConfig: tlsConfig, Protocols: protocols, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return ctx }, ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelDebug)}
-	lc := net.ListenConfig{KeepAlive: 10 * time.Minute}
+	keepalive := tcp.Keepalive
+	if keepalive == 0 {
+		keepalive = -1
+	}
+	lc := net.ListenConfig{KeepAlive: keepalive, Control: ktimeout.UserTimeout(tcp.UserTimeout)}
+	lc.SetMultipathTCP(false)
 	s.tcp, err = lc.Listen(ctx, "tcp", c.Listen)
 	if err != nil {
 		return nil, err
@@ -130,6 +171,7 @@ func (s *Server) PublicKey() key.NodePublic { return s.core.PublicKey() }
 
 // Serve blocks until cancellation or a fatal listener error; every worker is joined.
 func (s *Server) Serve(ctx context.Context) error {
+	s.startMesh()
 	results := make(chan error, 4)
 	count := 1
 	if s.verifier != nil {
@@ -179,6 +221,7 @@ func ignoreClosed(err error) error {
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
 		s.cancel()
+		s.closeMesh()
 		if s.tcp != nil {
 			_ = s.tcp.Close()
 		}
@@ -188,15 +231,17 @@ func (s *Server) Close() {
 		if s.verifierListener != nil {
 			_ = s.verifierListener.Close()
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		if s.verifier != nil {
-			_ = s.verifier.Close()
+			if err := s.verifier.Shutdown(ctx); err != nil {
+				_ = s.verifier.Close()
+			}
 		}
 		// net/http does not own hijacked DERP connections.
 		if s.core != nil {
 			_ = s.core.Close()
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
 		if s.tlsServer != nil {
 			if err := s.tlsServer.Shutdown(ctx); err != nil {
 				_ = s.tlsServer.Close()

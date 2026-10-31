@@ -4,10 +4,10 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"github.com/gatework/derper-go/internal/admission"
+	"github.com/gatework/derper-go/internal/bootstrap"
 	"log/slog"
-	"net"
 	"path/filepath"
-	"strconv"
 	"sync"
 
 	"github.com/gatework/derper-go/internal/certificate"
@@ -36,6 +36,11 @@ func NewDNSPublisher(s config.Settings, dir string, approved []cloudflare.Record
 	return dns.New(dns.Options{Domain: s.Domain, StateDir: dir, IPv4: ipv4, IPv6: ipv6, AutoIPv4: s.AutoIPv4, Publish: s.PublishDNS, Approved: approved}, client)
 }
 func Check(s config.Settings) error {
+	if s.MeshKeyFile != "" {
+		if _, err := relay.LoadMeshKey(s.MeshKeyFile); err != nil {
+			return err
+		}
+	}
 	if !s.AutomaticCertificate() {
 		_, err := certificate.Manual(s.Domain, s.CertificateFile, s.CertificateKey)
 		return err
@@ -70,9 +75,17 @@ func Run(parent context.Context, s config.Settings, dir string, logger *slog.Log
 	}
 	defer func() { health.stop(err) }()
 	var verifier *tailnet.Verifier
-	if s.Access == config.Tailnet {
+	var controller *admission.Controller
+	var access relay.ClientVerifier
+	if s.RelayEnabled && s.Access == config.Controller {
+		controller = admission.New(admission.Options{URL: s.AdmissionURL, FailOpen: s.AdmissionFailOpen, Timeout: s.AdmissionTimeout, MaxConcurrentChecks: s.MaxConcurrentChecks})
+		defer controller.Close()
+		access = controller
+	}
+	if s.RelayEnabled && s.Access == config.Tailnet {
 		verifier = tailnet.New(tailnet.Options{Socket: s.Socket, MaxConcurrentChecks: s.MaxConcurrentChecks})
 		defer verifier.Close()
+		access = verifier
 	}
 	var renewer *certificate.Renewer
 	var get relay.CertificateSource
@@ -89,19 +102,32 @@ func Run(parent context.Context, s config.Settings, dir string, logger *slog.Log
 			return err
 		}
 	}
-	opts := relay.Options{MaxConnections: s.MaxConnections, Domain: s.Domain, Listen: net.JoinHostPort("", strconv.Itoa(s.Port)), STUNEnabled: s.STUNEnabled, STUNListen: net.JoinHostPort("", strconv.Itoa(s.STUNPort)), HTTPPort: -1}
-	if verifier != nil {
-		opts.Verifier = verifier
+	opts := relay.Options{Disabled: !s.RelayEnabled, Homepage: s.Homepage, MaxConnections: s.MaxConnections, Domain: s.Domain, Listen: s.HTTPSAddress(), STUNEnabled: s.STUNEnabled, STUNListen: s.STUNAddress(), HTTPPort: s.HTTPPort, Verifier: access, AdmissionTimeout: s.AdmissionTimeout, BlockedApps: s.BlockedApps, ConnectionRate: s.ConnectionRate, ConnectionBurst: s.ConnectionBurst, TCP: &relay.TCPOptions{Keepalive: s.TCPKeepalive, UserTimeout: s.TCPUserTimeout, WriteTimeout: s.TCPWriteTimeout}}
+	if s.MeshKeyFile != "" {
+		secret, e := relay.LoadMeshKey(s.MeshKeyFile)
+		if e != nil {
+			return e
+		}
+		opts.Mesh = &relay.MeshOptions{Key: secret}
+		for _, peer := range s.MeshPeers {
+			opts.Mesh.Peers = append(opts.Mesh.Peers, relay.MeshPeer{Host: peer.Host, Dial: peer.Dial})
+		}
 	}
-	if s.CaptivePortal {
-		opts.HTTPPort = 80
+	var bootstrapDNS *bootstrap.Service
+	if len(s.BootstrapNames)+len(s.BootstrapUnlisted) > 0 {
+		options := bootstrap.Options{Names: s.BootstrapNames}
+		for _, name := range s.BootstrapUnlisted {
+			options.Unlisted = append(options.Unlisted, bootstrap.Name{Name: name.Name, RolloutRecord: name.RolloutRecord})
+		}
+		bootstrapDNS = bootstrap.New(options)
+		opts.Bootstrap = bootstrapDNS
 	}
 	server, err := relay.Bind(ctx, opts, identity, get, logger)
 	if err != nil {
 		return err
 	}
 	defer server.Close()
-	health.watch(server, verifier)
+	health.watch(server, verifier, controller, s)
 	if renewer != nil {
 		if err = renewer.Start(ctx); err != nil {
 			return err
@@ -132,6 +158,9 @@ func Run(parent context.Context, s config.Settings, dir string, logger *slog.Log
 	}
 	logger.Info("中继已就绪", "domain", s.Domain, "port", s.Port, "access", s.Access)
 	var workers sync.WaitGroup
+	if bootstrapDNS != nil {
+		workers.Go(func() { bootstrapDNS.Run(ctx, health.bootstrap) })
+	}
 	if s.PublishDNS {
 		deployment, e := state.ReadDeployment(dir)
 		if e != nil {

@@ -21,6 +21,7 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 	fs.SetOutput(ui.err)
 	path, dir, tokenFile := config.DefaultPath, "", ""
 	var input config.Config
+	httpPort := -1
 	yes, accept, noService, noStart, noDNS, noSTUN := false, false, false, false, false, false
 	fs.StringVar(&path, "config", path, "配置文件")
 	fs.StringVar(&path, "c", path, "配置文件")
@@ -28,10 +29,12 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 	fs.StringVar(&input.Domain, "domain", "", "中继域名，例如 relay.example.com")
 	fs.StringVar(&input.Email, "email", "", "证书联系邮箱")
 	fs.StringVar(&tokenFile, "token-file", "", "Cloudflare API Token 文件（也可使用 CLOUDFLARE_API_TOKEN 环境变量）")
-	fs.IntVar(&input.Port, "port", 0, "HTTPS 端口（默认优先 443，占用时建议 8443）")
+	fs.StringVar(&input.Relay.Listen, "listen", "", "HTTPS 监听地址，如 :443、127.0.0.1:8443 或 [::1]:443")
+	fs.IntVar(&httpPort, "http-port", -1, "HTTP 探测端口，-1 关闭（默认）")
+	fs.StringVar(&input.Admission.URL, "admission-url", "", "自定义准入控制器 HTTPS 地址，本机也可使用 HTTP")
 	fs.IntVar(&input.Region, "region", 0, "Tailnet 中继区域（默认从 900–999 自动选择）")
 	access := ""
-	fs.StringVar(&access, "access", "", "访问范围：tailnet（默认）或 public")
+	fs.StringVar(&access, "admission", "", "准入模式：tailnet（默认）、controller 或 public")
 	fs.StringVar(&input.DNS.IPv4, "ipv4", "", "公网 IPv4（默认自动发现，off 关闭）")
 	fs.StringVar(&input.DNS.IPv6, "ipv6", "", "公网 IPv6（默认不发布）")
 	fs.StringVar(&input.Tailscale.Socket, "socket", "", "已有 tailscaled 的套接字")
@@ -109,12 +112,16 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 			c.Domain = input.Domain
 		case "email":
 			c.Email = input.Email
-		case "port":
-			c.Port = input.Port
+		case "listen":
+			c.Relay.Listen = input.Relay.Listen
+		case "http-port":
+			c.HTTP.Port = &httpPort
+		case "admission-url":
+			c.Admission.URL = input.Admission.URL
 		case "region":
 			c.Region = input.Region
-		case "access":
-			c.Access = config.Access(access)
+		case "admission":
+			c.Admission.Mode = config.AdmissionMode(access)
 		case "ipv4":
 			c.DNS.IPv4 = input.DNS.IPv4
 		case "ipv6":
@@ -209,7 +216,7 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 	if err != nil {
 		return failure(ui, err)
 	}
-	fmt.Fprintf(ui.out, "\n安装摘要\n域名：%s\nHTTPS：%d\n访问范围：%s\n中继区域：%d\n配置：%s\n状态：%s\n", plan.Settings.Domain, plan.Settings.Port, plan.Settings.Access, plan.Settings.Region, path, dir)
+	fmt.Fprintf(ui.out, "\n安装摘要\n域名：%s\nHTTPS：%s\n准入模式：%s\n中继区域：%d\n配置：%s\n状态：%s\n", plan.Settings.Domain, plan.Settings.HTTPSAddress(), plan.Settings.Access, plan.Settings.Region, path, dir)
 	if plan.AlternatePort {
 		fmt.Fprintln(ui.out, "443 已被占用，本次将保存并使用 8443。")
 	}

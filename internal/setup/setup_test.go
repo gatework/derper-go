@@ -19,8 +19,8 @@ func fixture(t *testing.T) (*Workflow, Request) {
 	dir := filepath.Join(t.TempDir(), "new-deployment")
 	w := New()
 	w.checkHost = func() error { return nil }
-	w.portAvailable = func(context.Context, int) bool { return true }
-	w.stunAvailable = func(context.Context, int) bool { return true }
+	w.portAvailable = func(context.Context, string, int) bool { return true }
+	w.stunAvailable = func(context.Context, string, int) bool { return true }
 	w.checkTailnet = func(context.Context, string, int) (int, error) { return 907, nil }
 	w.discoverIPv4 = func(context.Context) (string, error) { return "192.0.2.1", nil }
 	w.dnsPlan = func(context.Context, config.Settings, string, string) ([]dns.Change, error) {
@@ -34,12 +34,12 @@ func fixture(t *testing.T) (*Workflow, Request) {
 }
 func TestPlanIsReadOnlyAndPersistsOnlyChoices(t *testing.T) {
 	w, r := fixture(t)
-	w.portAvailable = func(_ context.Context, port int) bool { return port == 8443 }
+	w.portAvailable = func(_ context.Context, _ string, port int) bool { return port == 8443 }
 	p, err := w.Prepare(context.Background(), r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Config.Port != 8443 || p.Config.Region != 907 || !p.AlternatePort {
+	if p.Config.Relay.Listen != ":8443" || p.Config.Region != 907 || !p.AlternatePort {
 		t.Fatal("lost discovery decisions")
 	}
 	if _, err = os.Stat(filepath.Dir(r.Path)); !errors.Is(err, os.ErrNotExist) {
@@ -198,14 +198,15 @@ func TestCanceledSetupAndSymlinkRefused(t *testing.T) {
 
 func TestPreflightChecksEnabledListenersBeforeWriting(t *testing.T) {
 	w, r := fixture(t)
-	w.stunAvailable = func(context.Context, int) bool { return false }
+	w.stunAvailable = func(context.Context, string, int) bool { return false }
 	if _, err := w.Prepare(context.Background(), r); err == nil {
 		t.Fatal("occupied STUN accepted")
 	}
 	off := false
 	r.Config.STUN.Enabled = &off
-	r.Config.CaptivePortal = true
-	w.portAvailable = func(_ context.Context, port int) bool { return port != 80 }
+	httpPort := 80
+	r.Config.HTTP.Port = &httpPort
+	w.portAvailable = func(_ context.Context, _ string, port int) bool { return port != 80 }
 	if _, err := w.Prepare(context.Background(), r); err == nil {
 		t.Fatal("occupied HTTP accepted")
 	}

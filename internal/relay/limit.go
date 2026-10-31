@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"golang.org/x/time/rate"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -9,22 +10,36 @@ import (
 const DefaultMaxConnections = 2048
 
 type ConnectionStats struct {
-	Active   int64  `json:"active"`
-	Limit    int64  `json:"limit"`
-	Accepted uint64 `json:"accepted"`
-	Rejected uint64 `json:"rejected"`
+	RateRejected uint64 `json:"rate_rejected"`
+	Active       int64  `json:"active"`
+	Limit        int64  `json:"limit"`
+	Accepted     uint64 `json:"accepted"`
+	Rejected     uint64 `json:"rejected"`
 }
 
 type connectionLimit struct {
+	rate               *rate.Limiter
+	rateRejected       atomic.Uint64
 	limit              int64
 	active             atomic.Int64
 	accepted, rejected atomic.Uint64
 }
 
 func (l *connectionLimit) stats() ConnectionStats {
-	return ConnectionStats{Active: l.active.Load(), Limit: l.limit, Accepted: l.accepted.Load(), Rejected: l.rejected.Load()}
+	return ConnectionStats{RateRejected: l.rateRejected.Load(), Active: l.active.Load(), Limit: l.limit, Accepted: l.accepted.Load(), Rejected: l.rejected.Load()}
+}
+func (l *connectionLimit) setRate(perSecond float64, burst int) {
+	if burst <= 0 {
+		burst = max(1, int(perSecond))
+	}
+	l.rate = rate.NewLimiter(rate.Limit(perSecond), burst)
 }
 func (l *connectionLimit) acquire() bool {
+	if l.rate != nil && !l.rate.Allow() {
+		l.rateRejected.Add(1)
+		l.rejected.Add(1)
+		return false
+	}
 	for {
 		n := l.active.Load()
 		if n >= l.limit {

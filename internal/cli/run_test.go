@@ -35,7 +35,7 @@ func command(t *testing.T, args ...string) (int, string, string) {
 }
 func TestReadOnlyCommands(t *testing.T) {
 	path, _ := configFile(t)
-	for _, args := range [][]string{{}, {"--help"}, {"run", "--help"}, {"init", "--help"}, {"dns", "--help"}, {"version"}, {"config", "check", "-c", path}, {"config", "show", "-c", path}, {"tailnet", "config", "-c", path}, {"service", "render", "-c", path}} {
+	for _, args := range [][]string{{}, {"--help"}, {"run", "--help"}, {"init", "--help"}, {"dns", "--help"}, {"version"}, {"config", "check", "-c", path}, {"config", "show", "-c", path}, {"config", "show", "--effective", "-c", path}, {"tailnet", "config", "-c", path}, {"service", "render", "-c", path}} {
 		code, _, errOut := command(t, args...)
 		if code != 0 {
 			t.Fatalf("%v: %d %s", args, code, errOut)
@@ -94,7 +94,7 @@ func TestInitForegroundIdempotent(t *testing.T) {
 	}
 	port := l.Addr().(*net.TCPAddr).Port
 	l.Close()
-	args := []string{"init", "--port", strconv.Itoa(port), "--no-service", "--yes", "--no-dns", "--no-stun", "--access", "public", "--domain", "relay.example.com", "--certificate", "source.pem", "--key", "source.key", "-c", path}
+	args := []string{"init", "--listen", ":" + strconv.Itoa(port), "--no-service", "--yes", "--no-dns", "--no-stun", "--admission", "public", "--domain", "relay.example.com", "--certificate", "source.pem", "--key", "source.key", "-c", path}
 	code, _, errOut := command(t, args...)
 	if code != 0 {
 		t.Fatal(errOut)

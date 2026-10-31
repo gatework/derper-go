@@ -49,8 +49,8 @@ type Plan struct {
 type Workflow struct {
 	checkHost     func() error
 	checkTailnet  func(context.Context, string, int) (int, error)
-	portAvailable func(context.Context, int) bool
-	stunAvailable func(context.Context, int) bool
+	portAvailable func(context.Context, string, int) bool
+	stunAvailable func(context.Context, string, int) bool
 	discoverIPv4  func(context.Context) (string, error)
 	dnsPlan       func(context.Context, config.Settings, string, string) ([]dns.Change, error)
 	terms         func(context.Context, string) (string, error)
@@ -71,16 +71,16 @@ func inspectTailnet(ctx context.Context, socket string, region int) (int, error)
 	}
 	return v.Region(ctx, region)
 }
-func portAvailable(ctx context.Context, port int) bool {
-	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", net.JoinHostPort("", strconv.Itoa(port)))
+func portAvailable(ctx context.Context, host string, port int) bool {
+	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		return false
 	}
 	l.Close()
 	return true
 }
-func stunAvailable(ctx context.Context, port int) bool {
-	conn, err := (&net.ListenConfig{}).ListenPacket(ctx, "udp", net.JoinHostPort("", strconv.Itoa(port)))
+func stunAvailable(ctx context.Context, host string, port int) bool {
+	conn, err := (&net.ListenConfig{}).ListenPacket(ctx, "udp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		return false
 	}
@@ -148,7 +148,7 @@ func (w *Workflow) Prepare(ctx context.Context, r Request) (Plan, error) {
 	if err != nil {
 		return p, err
 	}
-	if p.Settings.Access == config.Tailnet {
+	if p.Settings.RelayEnabled && p.Settings.Access == config.Tailnet {
 		id, e := w.checkTailnet(ctx, p.Settings.Socket, p.Config.Region)
 		if e != nil {
 			return p, e
@@ -157,22 +157,22 @@ func (w *Workflow) Prepare(ctx context.Context, r Request) (Plan, error) {
 			p.Config.Region = id
 		}
 	}
-	if !w.portAvailable(ctx, p.Settings.Port) {
-		if p.Config.Port != 0 || !w.portAvailable(ctx, config.AlternatePort) {
-			return p, fmt.Errorf("HTTPS 端口 %d 已被占用，请指定可用的 --port", p.Settings.Port)
+	if !w.portAvailable(ctx, p.Settings.ListenHost, p.Settings.Port) {
+		if p.Config.Relay.Listen != "" || !w.portAvailable(ctx, p.Settings.ListenHost, config.AlternatePort) {
+			return p, fmt.Errorf("HTTPS 端口 %d 已被占用，请指定可用的 --listen", p.Settings.Port)
 		}
-		p.Config.Port = config.AlternatePort
+		p.Config.Relay.Listen = net.JoinHostPort(p.Settings.ListenHost, strconv.Itoa(config.AlternatePort))
 		p.AlternatePort = true
 	}
 	p.Settings, err = Resolve(p.Config, p.Path)
 	if err != nil {
 		return p, err
 	}
-	if p.Settings.STUNEnabled && !w.stunAvailable(ctx, p.Settings.STUNPort) {
+	if p.Settings.STUNEnabled && !w.stunAvailable(ctx, p.Settings.ListenHost, p.Settings.STUNPort) {
 		return p, fmt.Errorf("STUN UDP 端口 %d 不可用", p.Settings.STUNPort)
 	}
-	if p.Settings.CaptivePortal && !w.portAvailable(ctx, 80) {
-		return p, errors.New("HTTP 探测端口 80 不可用")
+	if p.Settings.HTTPPort > 0 && !w.portAvailable(ctx, p.Settings.ListenHost, p.Settings.HTTPPort) {
+		return p, fmt.Errorf("HTTP 探测端口 %d 不可用", p.Settings.HTTPPort)
 	}
 	if p.Service {
 		// Validate the credential path that Apply will manage, before any writes.
@@ -443,10 +443,10 @@ func WaitReady(ctx context.Context, dir string, s config.Settings) error {
 				if s.PublishDNS && status.DNS.State == "degraded" {
 					return fmt.Errorf("中继已运行，但 DNS 发布失败：%s；修复后会自动重试", status.DNS.Detail)
 				}
-				if s.Access == config.Tailnet && status.Tailnet.State == "degraded" {
+				if s.RelayEnabled && s.Access == config.Tailnet && status.Tailnet.State == "degraded" {
 					return fmt.Errorf("中继已运行，但 Tailnet 检查失败：%s", status.Tailnet.Detail)
 				}
-				if (!s.PublishDNS || status.DNS.State == "ready") && (s.Access != config.Tailnet || status.Tailnet.State == "ready") {
+				if (!s.PublishDNS || status.DNS.State == "ready") && (!s.RelayEnabled || s.Access != config.Tailnet || status.Tailnet.State == "ready") {
 					return nil
 				}
 			}

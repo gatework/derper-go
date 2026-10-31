@@ -132,9 +132,11 @@ func execute(ctx context.Context, args []string, ui terminal) (code int) {
 	fs.StringVar(&path, "config", path, "配置文件")
 	fs.StringVar(&path, "c", path, "配置文件")
 	fs.StringVar(&dir, "state-dir", "", "状态目录（默认与部署位置对应）")
-	jsonOutput, yes, force := false, false, false
+	jsonOutput, yes, force, effective := false, false, false, false
 	format, certPath, keyPath, binary := "policy", "", "", systemd.Binary
 	switch name {
+	case "config/show":
+		fs.BoolVar(&effective, "effective", false, "显示已生效的默认值和绝对路径")
 	case "status", "doctor":
 		fs.BoolVar(&jsonOutput, "json", false, "输出机器可读 JSON")
 	case "tailnet/config":
@@ -225,7 +227,12 @@ func execute(ctx context.Context, args []string, ui terminal) (code int) {
 	case "status":
 		err = showStatus(ui, dir, jsonOutput)
 	case "config/show":
-		err = encode(c)
+		if effective {
+			c, err = c.Effective(filepath.Dir(path))
+		}
+		if err == nil {
+			err = encode(c)
+		}
 	case "config/check":
 		err = daemon.Check(s)
 		if err == nil {
@@ -354,7 +361,8 @@ func showStatus(ui terminal, dir string, jsonOutput bool) error {
 	if jsonOutput {
 		return json.NewEncoder(ui.out).Encode(s)
 	}
-	fmt.Fprintf(ui.out, "域名：%s\n进程：%s\n中继：%s\n证书：%s %s\nDNS：%s %s\nTailnet：%s %s\n", s.Domain, verdict(s.Active), verdict(s.Ready), component(s.Certificate.State), s.Certificate.Detail, component(s.DNS.State), s.DNS.Detail, component(s.Tailnet.State), s.Tailnet.Detail)
+	fmt.Fprintf(ui.out, "域名：%s\n进程：%s\n中继：%s\n证书：%s %s\nDNS：%s %s\nTailnet：%s %s\n", s.Domain, verdict(s.Active), component(s.Relay.State), component(s.Certificate.State), s.Certificate.Detail, component(s.DNS.State), s.DNS.Detail, component(s.Tailnet.State), s.Tailnet.Detail)
+	fmt.Fprintf(ui.out, "准入：%s %s\n节点互联：%s %s\n引导 DNS：%s %s\n", s.AdmissionMode, component(s.AdmissionHealth.State), component(s.Mesh.State), s.Mesh.Detail, component(s.Bootstrap.State), s.Bootstrap.Detail)
 	if s.Error != "" {
 		fmt.Fprintln(ui.out, "最近错误：", s.Error)
 	}
@@ -366,8 +374,12 @@ func component(s string) string {
 		return "就绪"
 	case "degraded":
 		return "异常"
+	case "stopped":
+		return "已停止"
 	case "disabled":
 		return "已关闭"
+	case "configured":
+		return "已配置，等待连接验证"
 	case "public":
 		return "公开访问"
 	default:

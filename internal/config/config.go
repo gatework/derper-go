@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/gatework/derper-go/internal/fileio"
@@ -33,28 +34,33 @@ const (
 	StagingCA                  = "https://acme-staging-v02.api.letsencrypt.org/directory"
 )
 
-type Access string
+type AdmissionMode string
 
 const (
-	Tailnet Access = "tailnet"
-	Public  Access = "public"
+	Tailnet    AdmissionMode = "tailnet"
+	Public     AdmissionMode = "public"
+	Controller AdmissionMode = "controller"
 )
 
 // Config contains only user choices. A zero optional field selects its default.
 type Config struct {
-	Domain        string      `json:"domain"`
-	Email         string      `json:"email,omitempty"`
-	Port          int         `json:"port,omitempty"`
-	Region        int         `json:"region,omitempty"`
-	Access        Access      `json:"access,omitempty"`
-	Certificate   Certificate `json:"certificate,omitzero"`
-	DNS           DNS         `json:"dns,omitzero"`
-	Relay         Relay       `json:"relay,omitzero"`
-	Tailscale     Tailscale   `json:"tailscale,omitzero"`
-	Cloudflare    Cloudflare  `json:"cloudflare,omitzero"`
-	STUN          STUN        `json:"stun,omitzero"`
-	CaptivePortal bool        `json:"captive_portal,omitempty"`
-	LogLevel      string      `json:"log_level,omitempty"`
+	Domain string `json:"domain"`
+	Email  string `json:"email,omitempty"`
+
+	Region int `json:"region,omitempty"`
+
+	Certificate  Certificate  `json:"certificate,omitzero"`
+	DNS          DNS          `json:"dns,omitzero"`
+	HTTP         HTTP         `json:"http,omitzero"`
+	Admission    Admission    `json:"admission,omitzero"`
+	Mesh         Mesh         `json:"mesh,omitzero"`
+	BootstrapDNS BootstrapDNS `json:"bootstrap_dns,omitzero"`
+	Relay        Relay        `json:"relay,omitzero"`
+	Tailscale    Tailscale    `json:"tailscale,omitzero"`
+	Cloudflare   Cloudflare   `json:"cloudflare,omitzero"`
+	STUN         STUN         `json:"stun,omitzero"`
+
+	LogLevel string `json:"log_level,omitempty"`
 }
 type Certificate struct {
 	File string `json:"file,omitempty"`
@@ -67,11 +73,15 @@ type DNS struct {
 	IPv6    string `json:"ipv6,omitempty"`
 }
 type Relay struct {
-	MaxConnections int `json:"max_connections,omitempty"`
+	Listen         string         `json:"listen,omitempty"`
+	Enabled        *bool          `json:"enabled,omitempty"`
+	ConnectionRate ConnectionRate `json:"connection_rate,omitzero"`
+	TCP            TCP            `json:"tcp,omitzero"`
+	Homepage       string         `json:"homepage,omitempty"`
+	MaxConnections int            `json:"max_connections,omitempty"`
 }
 type Tailscale struct {
-	Socket              string `json:"socket,omitempty"`
-	MaxConcurrentChecks int    `json:"max_concurrent_checks,omitempty"`
+	Socket string `json:"socket,omitempty"`
 }
 type Cloudflare struct {
 	Zone      string `json:"zone,omitempty"`
@@ -84,11 +94,20 @@ type STUN struct {
 
 // Settings is a resolved value passed only to the composition layer.
 type Settings struct {
+	ListenHost, Homepage, AdmissionURL, MeshKeyFile                          string
+	RelayEnabled, AdmissionFailOpen                                          bool
+	HTTPPort, ConnectionBurst                                                int
+	ConnectionRate                                                           float64
+	TCPKeepalive, TCPUserTimeout, TCPWriteTimeout, AdmissionTimeout          time.Duration
+	BlockedApps                                                              []string
+	MeshPeers                                                                []MeshPeer
+	BootstrapNames                                                           []string
+	BootstrapUnlisted                                                        []BootstrapName
 	MaxConnections, MaxConcurrentChecks                                      int
 	Domain, Email                                                            string
 	Port, Region, STUNPort                                                   int
-	Access                                                                   Access
-	STUNEnabled, CaptivePortal, PublishDNS, AutoIPv4                         bool
+	Access                                                                   AdmissionMode
+	STUNEnabled, PublishDNS, AutoIPv4                                        bool
 	IPv4, IPv6                                                               netip.Addr
 	CertificateFile, CertificateKey, CA, Socket, ZoneID, TokenFile, LogLevel string
 }
@@ -149,8 +168,11 @@ func ValidateDomain(domain string) error {
 }
 func (c Config) Validate() error { _, err := c.Resolve("."); return err }
 func (c Config) Resolve(base string) (Settings, error) {
-	s := Settings{Domain: strings.ToLower(strings.TrimSuffix(c.Domain, ".")), Email: c.Email, Port: c.Port, Region: c.Region, Access: c.Access, STUNPort: c.STUN.Port, STUNEnabled: true, PublishDNS: true, CaptivePortal: c.CaptivePortal, CA: c.Certificate.CA, Socket: c.Tailscale.Socket, ZoneID: c.Cloudflare.Zone, LogLevel: c.LogLevel}
-	s.MaxConnections, s.MaxConcurrentChecks = c.Relay.MaxConnections, c.Tailscale.MaxConcurrentChecks
+	s := Settings{Domain: strings.ToLower(strings.TrimSuffix(c.Domain, ".")), Email: c.Email, Port: DefaultPort, Region: c.Region, Access: c.Admission.Mode, STUNPort: c.STUN.Port, STUNEnabled: true, PublishDNS: true, CA: c.Certificate.CA, Socket: c.Tailscale.Socket, ZoneID: c.Cloudflare.Zone, LogLevel: c.LogLevel}
+	s.MaxConnections, s.MaxConcurrentChecks = c.Relay.MaxConnections, c.Admission.MaxConcurrentChecks
+	if err := c.resolveListen(&s); err != nil {
+		return s, err
+	}
 	if s.MaxConnections == 0 {
 		s.MaxConnections = DefaultMaxConnections
 	}
@@ -161,7 +183,7 @@ func (c Config) Resolve(base string) (Settings, error) {
 		return s, invalid("relay.max_connections", "连接上限应为 1–60000")
 	}
 	if s.MaxConcurrentChecks < 1 || s.MaxConcurrentChecks > 128 {
-		return s, invalid("tailscale.max_concurrent_checks", "并行验证上限应为 1–128")
+		return s, invalid("admission.max_concurrent_checks", "并行验证上限应为 1–128")
 	}
 	if err := ValidateDomain(s.Domain); err != nil {
 		return s, err
@@ -177,6 +199,9 @@ func (c Config) Resolve(base string) (Settings, error) {
 	}
 	if s.Access == "" {
 		s.Access = Tailnet
+		if c.Admission.URL != "" {
+			s.Access = Controller
+		}
 	}
 	if s.Socket == "" {
 		s.Socket = DefaultSocket
@@ -196,14 +221,11 @@ func (c Config) Resolve(base string) (Settings, error) {
 	if s.STUNPort < 1 || s.STUNPort > 65535 {
 		return s, invalid("STUN 端口", "取值应为 1–65535")
 	}
-	if s.CaptivePortal && s.Port == 80 {
-		return s, invalid("HTTP 探测", "80 端口不能同时用于 HTTPS")
-	}
 	if s.Region < 900 || s.Region > 999 {
 		return s, invalid("中继区域", "请使用 900–999 的自定义区域编号")
 	}
-	if s.Access != Tailnet && s.Access != Public {
-		return s, invalid("访问范围", "请选择 tailnet 或 public")
+	if s.Access != Tailnet && s.Access != Public && s.Access != Controller {
+		return s, invalid("admission.mode", "请选择 tailnet、controller 或 public")
 	}
 	abs, err := filepath.Abs(base)
 	if err != nil {
@@ -268,7 +290,8 @@ func (c Config) Resolve(base string) (Settings, error) {
 	default:
 		return s, invalid("日志级别", "请选择 debug、info、warn 或 error")
 	}
-	return s, nil
+	err = c.resolveAdvanced(&s, abs)
+	return s, err
 }
 func HTTPSURL(raw string) error {
 	u, err := url.Parse(raw)

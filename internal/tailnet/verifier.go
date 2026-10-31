@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gatework/derper-go/internal/admission"
 	"tailscale.com/client/local"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -32,15 +33,6 @@ type Options struct {
 	Socket              string
 	MaxConcurrentChecks int
 }
-type AdmissionStats struct {
-	Requests            int    `json:"requests"`
-	Running             int    `json:"running"`
-	MaxConcurrentChecks int    `json:"max_concurrent_checks"`
-	MaxRequests         int    `json:"max_requests"`
-	Rejected            uint64 `json:"rejected"`
-	Limited             uint64 `json:"limited"`
-	Coalesced           uint64 `json:"coalesced"`
-}
 type nodeCheck struct {
 	done    chan struct{}
 	cancel  context.CancelFunc
@@ -48,18 +40,19 @@ type nodeCheck struct {
 	err     error
 }
 type Verifier struct {
-	client                       *local.Client
-	transport                    *http.Transport
-	ctx                          context.Context
-	cancel                       context.CancelFunc
-	mu                           sync.Mutex
-	closed                       bool
-	calls                        map[key.NodePublic]*nodeCheck
-	requests                     chan struct{}
-	checks                       chan struct{}
-	wg                           sync.WaitGroup
-	rejected, limited, coalesced atomic.Uint64
-	lookup                       func(context.Context, key.NodePublic) error
+	running, peak                         atomic.Int64
+	client                                *local.Client
+	transport                             *http.Transport
+	ctx                                   context.Context
+	cancel                                context.CancelFunc
+	mu                                    sync.Mutex
+	closed                                bool
+	calls                                 map[key.NodePublic]*nodeCheck
+	requests                              chan struct{}
+	checks                                chan struct{}
+	wg                                    sync.WaitGroup
+	rejected, limited, coalesced, checked atomic.Uint64
+	lookup                                func(context.Context, key.NodePublic) error
 }
 
 func New(options Options) *Verifier {
@@ -84,8 +77,8 @@ func (v *Verifier) Close() {
 	v.wg.Wait()
 	v.transport.CloseIdleConnections()
 }
-func (v *Verifier) Stats() AdmissionStats {
-	return AdmissionStats{Requests: len(v.requests), Running: len(v.checks), MaxConcurrentChecks: cap(v.checks), MaxRequests: cap(v.requests), Rejected: v.rejected.Load(), Limited: v.limited.Load(), Coalesced: v.coalesced.Load()}
+func (v *Verifier) Stats() admission.Stats {
+	return admission.Stats{PeakRunning: v.peak.Load(), Checked: v.checked.Load(), Requests: len(v.requests), Running: len(v.checks), MaxConcurrentChecks: cap(v.checks), MaxRequests: cap(v.requests), Rejected: v.rejected.Load(), Limited: v.limited.Load(), Coalesced: v.coalesced.Load()}
 }
 func (v *Verifier) VerifyNode(parent context.Context, node key.NodePublic) (err error) {
 	defer func() {
@@ -163,7 +156,12 @@ func (v *Verifier) checkNode(ctx context.Context, node key.NodePublic, call *nod
 		err = ctx.Err()
 	case v.checks <- struct{}{}:
 		if err = ctx.Err(); err == nil {
+			n := v.running.Add(1)
+			for old := v.peak.Load(); n > old && !v.peak.CompareAndSwap(old, n); old = v.peak.Load() {
+			}
+			v.checked.Add(1)
 			err = v.lookup(ctx, node)
+			v.running.Add(-1)
 		}
 		<-v.checks
 	}
@@ -231,4 +229,8 @@ func (v *Verifier) Region(ctx context.Context, requested int) (int, error) {
 		}
 	}
 	return 0, errors.New("900–999 区域编号均已被占用，请先整理 Tailnet 中继配置")
+}
+
+func (v *Verifier) VerifyClient(ctx context.Context, request tailcfg.DERPAdmitClientRequest) error {
+	return v.VerifyNode(ctx, request.NodePublic)
 }

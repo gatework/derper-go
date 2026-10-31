@@ -19,7 +19,7 @@ mkdir -p /etc/derper-go
 cat >/etc/derper-go/config.json <<'JSON'
 {
   "domain": "relay.example.com",
-  "access": "public",
+  "admission": {"mode": "public"},
   "certificate": {"file": "/opt/test.pem", "key": "/opt/test.key"},
   "dns": {"publish": false}
 }
@@ -34,7 +34,7 @@ test -f /run/derper-go/status.json
 if systemctl show derper-go.service -p Environment --value | grep -q GOMEMLIMIT; then exit 1; fi
 test "$(stat -c '%a:%U:%G' /etc/derper-go/config.json)" = 640:root:derper-go
 test "$(stat -c '%a:%U:%G' /etc/derper-go/certificate.key)" = 640:root:derper-go
-jq -e '.port == 8443 and .certificate.file == "certificate.pem"' /etc/derper-go/config.json
+jq -e '.relay.listen == ":8443" and .certificate.file == "certificate.pem"' /etc/derper-go/config.json
 derper-go status --json | jq -e '.active and .ready and .certificate.state == "ready" and .dns.state == "disabled" and .tailnet.state == "public"'
 derper-go tailnet config | jq -e '.derpMap.regions["900"].Nodes[0].DERPPort == 8443'
 identity=$(sha256sum /var/lib/derper-go/identity.json)
@@ -50,7 +50,7 @@ test "$configuration" = "$(sha256sum /etc/derper-go/config.json)"
 kill "$occupant"
 wait "$occupant" || true
 occupant=
-jq '.port = 443' /etc/derper-go/config.json > /tmp/updated-config.json
+jq '.relay.listen = ":443"' /etc/derper-go/config.json > /tmp/updated-config.json
 cat /tmp/updated-config.json > /etc/derper-go/config.json
 derper-go service restart
 systemctl show derper-go.service -p AmbientCapabilities --value | grep -q cap_net_bind_service

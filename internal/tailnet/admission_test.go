@@ -23,7 +23,7 @@ func TestAdmissionBoundsAndCancellation(t *testing.T) {
 			go func() { results <- v.VerifyNode(ctx, key.NewNode().Public()) }()
 		}
 		synctest.Wait()
-		if s := v.Stats(); s.Requests != maxAdmissionRequests || s.Running != 4 {
+		if s := v.Stats(); s.Requests != maxAdmissionRequests || s.Running != 4 || s.PeakRunning != 4 {
 			t.Fatal(s)
 		}
 		if err := v.VerifyNode(ctx, key.NewNode().Public()); !errors.Is(err, ErrAdmissionLimit) {

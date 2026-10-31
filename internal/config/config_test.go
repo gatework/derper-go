@@ -23,7 +23,7 @@ func TestStrictConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.MaxConnections != 2048 || s.MaxConcurrentChecks != 32 || s.Domain != "relay.example.com" || s.Access != Tailnet || s.Port != 443 || s.CaptivePortal || !s.PublishDNS || !s.AutoIPv4 || s.IPv6.IsValid() {
+	if s.MaxConnections != 2048 || s.MaxConcurrentChecks != 32 || s.Domain != "relay.example.com" || s.Access != Tailnet || s.Port != 443 || s.HTTPPort != -1 || !s.PublishDNS || !s.AutoIPv4 || s.IPv6.IsValid() {
 		t.Fatalf("defaults: %+v", s)
 	}
 	b, err := json.Marshal(c)
@@ -35,7 +35,7 @@ func TestStrictConfiguration(t *testing.T) {
 	}
 }
 func TestPathsAndOverrides(t *testing.T) {
-	c, err := Decode([]byte(`{"domain":"relay.example.com","port":8443,"access":"public","certificate":{"file":"cert.pem","key":"key.pem"},"dns":{"publish":false},"stun":{"enabled":false}}`))
+	c, err := Decode([]byte(`{"domain":"relay.example.com","certificate":{"file":"cert.pem","key":"key.pem"},"dns":{"publish":false},"stun":{"enabled":false},"relay":{"listen":":8443"},"admission":{"mode":"public"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestPathsAndOverrides(t *testing.T) {
 	}
 }
 func TestInvalidSettings(t *testing.T) {
-	for _, change := range []func(*Config){func(c *Config) { c.DNS.IPv4 = "127.0.0.1" }, func(c *Config) { c.DNS.IPv4 = "100.64.0.1" }, func(c *Config) { c.DNS.IPv6 = "::ffff:192.0.2.1" }, func(c *Config) { c.Region = 1 }, func(c *Config) { c.Port = -1 }, func(c *Config) { c.DNS.IPv4 = "off" }, func(c *Config) { c.Certificate.CA = "http://bad.example" }} {
+	for _, change := range []func(*Config){func(c *Config) { c.DNS.IPv4 = "127.0.0.1" }, func(c *Config) { c.DNS.IPv4 = "100.64.0.1" }, func(c *Config) { c.DNS.IPv6 = "::ffff:192.0.2.1" }, func(c *Config) { c.Region = 1 }, func(c *Config) { c.Relay.Listen = ":-1" }, func(c *Config) { c.DNS.IPv4 = "off" }, func(c *Config) { c.Certificate.CA = "http://bad.example" }} {
 		c, _ := Decode([]byte(valid))
 		change(&c)
 		if c.Validate() == nil {

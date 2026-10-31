@@ -31,15 +31,20 @@ printf 'test credential\n' > "$work/expected"
 chmod 0644 "$work/expected"
 install -m 0600 "$work/expected" "$work/cloudflare.token"
 runuser -u nobody -- test ! -r "$work/cloudflare.token"
+printf '%064d\n' 1 > "$work/expected-mesh"
+chmod 0644 "$work/expected-mesh"
+install -m 0600 "$work/expected-mesh" "$work/mesh.key"
+runuser -u nobody -- test ! -r "$work/mesh.key"
 cat > "$work/check" <<'SH'
 #!/bin/sh
 set -eu
 test -n "${CREDENTIALS_DIRECTORY:-}"
-exec /usr/bin/cmp "$CREDENTIALS_DIRECTORY/cloudflare-token" "${0%/*}/expected"
+/usr/bin/cmp "$CREDENTIALS_DIRECTORY/cloudflare-token" "${0%/*}/expected"
+exec /usr/bin/cmp "$CREDENTIALS_DIRECTORY/mesh-key" "${0%/*}/expected-mesh"
 SH
 chmod 0755 "$work/check"
-jq -n --arg token "$work/cloudflare.token" \
-  '{domain:"relay.example.com",email:"ops@example.com",access:"public",cloudflare:{token_file:$token}}' \
+jq -n --arg token "$work/cloudflare.token" --arg mesh "$work/mesh.key" \
+  '{domain:"relay.example.com",email:"ops@example.com",admission:{mode:"public"},cloudflare:{token_file:$token},mesh:{key_file:$mesh}}' \
   > "$work/config.json"
 "$binary" service render -c "$work/config.json" |
   sed -e 's/^Type=notify$/Type=oneshot/' \

@@ -6,6 +6,7 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/gatework/derper-go/internal/testutil"
@@ -72,6 +73,23 @@ func BenchmarkConnectionQuota(b *testing.B) {
 			if quota.acquire() {
 				quota.active.Add(-1)
 			}
+		}
+	})
+}
+
+func TestConnectionBurstAndRateRefill(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		quota := &connectionLimit{limit: 100}
+		quota.setRate(2, 2)
+		if !quota.acquire() || !quota.acquire() || quota.acquire() {
+			t.Fatal("burst policy")
+		}
+		time.Sleep(500 * time.Millisecond)
+		if !quota.acquire() {
+			t.Fatal("rate did not refill")
+		}
+		if s := quota.stats(); s.Accepted != 3 || s.RateRejected != 1 || s.Rejected != 1 {
+			t.Fatal(s)
 		}
 	})
 }

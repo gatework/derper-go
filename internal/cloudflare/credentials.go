@@ -3,7 +3,6 @@ package cloudflare
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"unicode"
 
@@ -46,8 +45,5 @@ func ValidateToken(value string) (string, error) {
 
 // RuntimeCredentials uses the systemd snapshot when one was supplied.
 func RuntimeCredentials(file string) Credentials {
-	if dir := os.Getenv("CREDENTIALS_DIRECTORY"); dir != "" {
-		file = filepath.Join(dir, "cloudflare-token")
-	}
-	return Credentials{File: file}
+	return Credentials{File: fileio.CredentialPath("cloudflare-token", file)}
 }

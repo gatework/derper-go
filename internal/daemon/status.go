@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gatework/derper-go/internal/admission"
 	"github.com/gatework/derper-go/internal/certificate"
 	"github.com/gatework/derper-go/internal/config"
 	"github.com/gatework/derper-go/internal/fileio"
@@ -26,20 +27,25 @@ type Component struct {
 	Detail string `json:"detail,omitempty"`
 }
 type Status struct {
-	Connections relay.ConnectionStats  `json:"connections"`
-	Admission   tailnet.AdmissionStats `json:"admission"`
-	Domain      string                 `json:"domain"`
-	Phase       string                 `json:"phase"`
-	Cleanup     Component              `json:"certificate_cleanup"`
-	PID         int                    `json:"pid"`
-	Process     string                 `json:"process"`
-	Active      bool                   `json:"active"`
-	Ready       bool                   `json:"ready"`
-	Updated     time.Time              `json:"updated"`
-	Certificate Component              `json:"certificate"`
-	DNS         Component              `json:"dns"`
-	Tailnet     Component              `json:"tailnet"`
-	Error       string                 `json:"error,omitempty"`
+	Relay           Component             `json:"relay"`
+	Mesh            Component             `json:"mesh"`
+	Bootstrap       Component             `json:"bootstrap_dns"`
+	AdmissionHealth Component             `json:"admission_health"`
+	AdmissionMode   config.AdmissionMode  `json:"admission_mode"`
+	Connections     relay.ConnectionStats `json:"connections"`
+	Admission       admission.Stats       `json:"admission"`
+	Domain          string                `json:"domain"`
+	Phase           string                `json:"phase"`
+	Cleanup         Component             `json:"certificate_cleanup"`
+	PID             int                   `json:"pid"`
+	Process         string                `json:"process"`
+	Active          bool                  `json:"active"`
+	Ready           bool                  `json:"ready"`
+	Updated         time.Time             `json:"updated"`
+	Certificate     Component             `json:"certificate"`
+	DNS             Component             `json:"dns"`
+	Tailnet         Component             `json:"tailnet"`
+	Error           string                `json:"error,omitempty"`
 }
 
 func processIdentity(pid int) (string, error) {
@@ -85,6 +91,9 @@ func ReadStatus(dir string) (Status, error) {
 		s.Error = "运行状态超过 30 秒未更新，请查看 service logs"
 	}
 	if !s.Active {
+		if s.Relay.State != "disabled" {
+			s.Relay.State = "stopped"
+		}
 		s.Phase = "stopped"
 		s.Ready = false
 	}
@@ -101,17 +110,21 @@ func statusPath(dir string) string {
 }
 
 type health struct {
-	connections func() relay.ConnectionStats
-	admission   func() tailnet.AdmissionStats
-	logger      *slog.Logger
-	mu          sync.Mutex
-	path        string
-	status      Status
-	dirty       chan struct{}
-	quit        chan struct{}
-	done        chan struct{}
-	stopOnce    sync.Once
-	write       func(string, any) error
+	controllerError func() error
+	relayEnabled    bool
+	mode            config.AdmissionMode
+	mesh            func() relay.MeshStats
+	connections     func() relay.ConnectionStats
+	admission       func() admission.Stats
+	logger          *slog.Logger
+	mu              sync.Mutex
+	path            string
+	status          Status
+	dirty           chan struct{}
+	quit            chan struct{}
+	done            chan struct{}
+	stopOnce        sync.Once
+	write           func(string, any) error
 }
 
 func newHealth(dir, domain string, logger *slog.Logger) (*health, error) {
@@ -151,7 +164,7 @@ func (h *health) snapshot() Status {
 		s.Phase = "stopped"
 	case !s.Ready:
 		s.Phase = "starting"
-	case s.Certificate.State == "degraded" || s.DNS.State == "degraded" || s.Tailnet.State == "degraded" || s.Cleanup.State == "degraded":
+	case s.Mesh.State == "degraded" || s.Bootstrap.State == "degraded" || s.AdmissionHealth.State == "degraded" || s.Certificate.State == "degraded" || s.DNS.State == "degraded" || s.Tailnet.State == "degraded" || s.Cleanup.State == "degraded":
 		s.Phase = "degraded"
 	default:
 		s.Phase = "ready"
@@ -195,6 +208,9 @@ func (h *health) ready(get relay.CertificateSource) error {
 	}
 	h.mu.Lock()
 	h.status.Ready = true
+	if h.status.Relay.State != "disabled" {
+		h.status.Relay.State = "ready"
+	}
 	h.status.Certificate = Component{State: "ready", Detail: pair.Leaf.NotAfter.UTC().Format(time.RFC3339)}
 	h.mu.Unlock()
 	h.changed()
@@ -204,6 +220,9 @@ func (h *health) stop(err error) {
 	h.stopOnce.Do(func() {
 		h.mu.Lock()
 		h.status.Active, h.status.Ready = false, false
+		if h.status.Relay.State != "disabled" {
+			h.status.Relay.State = "stopped"
+		}
 		if err != nil {
 			h.status.Error = err.Error()
 		}
@@ -232,6 +251,9 @@ func (h *health) monitor(ctx context.Context, get relay.CertificateSource, verif
 	defer ticker.Stop()
 	for {
 		check := Component{State: "public"}
+		if h.mode == config.Controller || !h.relayEnabled {
+			check.State = "disabled"
+		}
 		if verifier != nil {
 			check.State = "ready"
 			if err := verifier.Check(ctx); err != nil {
@@ -239,8 +261,31 @@ func (h *health) monitor(ctx context.Context, get relay.CertificateSource, verif
 			}
 		}
 		pair, err := get(nil)
+		var meshStats relay.MeshStats
+		if h.mesh != nil {
+			meshStats = h.mesh()
+		}
 		h.mu.Lock()
 		h.status.Tailnet = check
+		h.status.AdmissionHealth = check
+		if h.relayEnabled && h.mode == config.Controller {
+			h.status.AdmissionHealth = Component{State: "configured"}
+			if h.admission != nil && h.admission().Checked > 0 {
+				h.status.AdmissionHealth.State = "ready"
+			}
+			if h.controllerError != nil {
+				if err := h.controllerError(); err != nil {
+					h.status.AdmissionHealth = Component{State: "degraded", Detail: err.Error()}
+				}
+			}
+		}
+		if h.mesh != nil {
+			stats := meshStats
+			h.status.Mesh = Component{State: "ready", Detail: fmt.Sprintf("%d/%d 节点已连接", stats.Connected, stats.Peers)}
+			if stats.Connected < stats.Peers {
+				h.status.Mesh.State = "degraded"
+			}
+		}
 		h.status.Ready = err == nil
 		if err != nil {
 			h.status.Certificate = Component{State: "degraded", Detail: err.Error()}
@@ -267,11 +312,40 @@ func (h *health) monitor(ctx context.Context, get relay.CertificateSource, verif
 	}
 }
 
-func (h *health) watch(server *relay.Server, verifier *tailnet.Verifier) {
+func (h *health) watch(server *relay.Server, verifier *tailnet.Verifier, controller *admission.Controller, s config.Settings) {
 	h.mu.Lock()
+	h.mode = s.Access
+	h.relayEnabled = s.RelayEnabled
+	h.status.AdmissionMode = s.Access
+	h.status.Relay = Component{State: "pending"}
+	if !s.RelayEnabled {
+		h.status.Relay.State = "disabled"
+	}
+	h.status.Mesh = Component{State: "disabled"}
+	h.status.Bootstrap = Component{State: "disabled"}
+	if len(s.BootstrapNames)+len(s.BootstrapUnlisted) > 0 {
+		h.status.Bootstrap.State = "pending"
+	}
+	if len(s.MeshPeers) > 0 {
+		h.mesh = server.Mesh
+		h.status.Mesh.State = "pending"
+	}
 	h.connections = server.Connections
 	if verifier != nil {
 		h.admission = verifier.Stats
+	}
+	if controller != nil {
+		h.controllerError = controller.Error
+		h.admission = controller.Stats
+	}
+	h.mu.Unlock()
+	h.changed()
+}
+func (h *health) bootstrap(err error) {
+	h.mu.Lock()
+	h.status.Bootstrap = Component{State: "ready"}
+	if err != nil {
+		h.status.Bootstrap = Component{State: "degraded", Detail: err.Error()}
 	}
 	h.mu.Unlock()
 	h.changed()

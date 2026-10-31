@@ -2,7 +2,7 @@
 
 ## 新部署
 
-准备一台 Linux/systemd 主机。默认私有模式需要已有 tailscaled 正常运行并登录目标 Tailnet；程序只检查并给出 `tailscale up` 等指引，不负责安装或管理 tailscaled。明确需要公开中继时使用 `init --access public`。
+准备一台 Linux/systemd 主机。默认私有模式需要已有 tailscaled 正常运行并登录目标 Tailnet；程序只检查并给出 `tailscale up` 等指引，不负责安装或管理 tailscaled。明确需要公开中继时使用 `init --admission public`。
 
 构建或取得对应 Linux 架构的二进制，然后执行：
 
@@ -23,7 +23,7 @@ sudo derper-go tailnet config
 | `/var/lib/derper-go` | 独立服务用户持有，0700；身份、证书、条款、安装和 DNS 日志 |
 | `/etc/systemd/system/derper-go.service` | 独立 systemd 单元，Type=notify |
 
-HTTPS 默认选择 443，占用时建议 8443。两者都被占用时退出并提示 `--port`。初始化选择的端口与自定义中继区域固定保存在配置中；运行时不改端口或区域编号。STUN 默认 UDP 3478；监听冲突会在 ACME 下单及地址记录发布之前返回错误。HTTP 80 默认不启用。
+HTTPS 默认选择 443，占用时建议 8443。两者都被占用时退出并提示 `--listen`。初始化选择的端口与自定义中继区域固定保存在配置中；运行时不改端口或区域编号。STUN 默认 UDP 3478；监听冲突会在 ACME 下单及地址记录发布之前返回错误。HTTP 80 默认不启用。
 
 首次自动签发可等待 DNS 传播；systemd 启动超时为 15 分钟。TLS 服务进入接收循环后才报告就绪，然后进行 DNS 发布。`init` 还检查 DNS 与 Tailnet 状态，不能仅凭 `systemctl is-active` 判断发布已经成功。
 
@@ -75,7 +75,8 @@ Cloudflare Token 轮换时原子替换凭据文件。前台运行按请求重读
 
 本轮改进不自动升级运行中的服务。安排维护窗口后，先备份配置和整个状态目录，再使用经过 CI 的发行包替换程序；使用 `config check` 检查原有配置，`service render` 审阅新的单元，最后通过 `service restart` 更新单元并重启。
 
-- 原有最小配置仍可读取；新限额字段均有默认值。回退到 v0.1.0 前需删去其不认识的 `relay` 和 `tailscale.max_concurrent_checks`。
+- 本轮统一了配置结构，不保留重复别名。将顶层 `port` 转为 `relay.listen`（例如 `8443` 转为 `":8443"`）、`access` 转为 `admission.mode`、`captive_portal:true` 转为 `http.port:80`、`tailscale.max_concurrent_checks` 转为 `admission.max_concurrent_checks`，并删除旧字段。只有域名和邮箱的最小配置无需调整。用 `config show --effective` 审阅最终设置。
+- 配置参考见 [CONFIGURATION.md](CONFIGURATION.md)。回退程序时也必须恢复对应版本的配置；升级备份应同时保留程序、配置与状态。
 - 不重新执行签发、创建身份或接管 DNS。`identity.json`、证书缓存、DNS 归属与安装日志保持兼容。旧版不会处理新的清理退避日志，遇到限流时优先修复或等待，不应立即回退重试。
 - systemd 新增 `RuntimeDirectory=derper-go`；状态移到 `/run/derper-go/status.json`，读取器仍兼容旧位置。服务停止后运行目录可被 systemd 清理；持久状态不受影响。
 - 新单元移除了固定 `GOMEMLIMIT=96MiB`。需要内存预算时，通过 `systemctl edit derper-go` 的 `[Service]` / `Environment=GOMEMLIMIT=256MiB` 设置，并根据连接规模与实际 GC 数据调整。该值只是示例，不能替代容量验证。

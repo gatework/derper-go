@@ -34,6 +34,9 @@ type policyFragment struct {
 }
 
 func ExportTailnetConfig(c config.Settings, format string) ([]byte, error) {
+	if !c.RelayEnabled {
+		return nil, fmt.Errorf("此节点已关闭 DERP，只提供引导 DNS；不能发布为中继区域")
+	}
 	m := DERPMap(c)
 	var value any = m
 	switch format {

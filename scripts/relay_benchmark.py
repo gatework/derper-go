@@ -79,8 +79,10 @@ def measure(binary, label, scenario, args, *, budget="off", profiles=False):
         result = json.loads((output / "result.json").read_text())
         if result["seconds"] < seconds * 0.95:
             raise RuntimeError("measurement ended before the requested duration")
-        if scenario == "admission" and label.startswith("candidate") and result["after"]["peak_mock_checks"] > 32:
-            raise RuntimeError("admission exceeded the default 32 concurrent checks")
+        if scenario == "admission" and label.startswith("candidate"):
+            peak = result["after"]["status"]["admission"].get("peak_running", 0)
+            if not 1 <= peak <= 32:
+                raise RuntimeError("client-side admission concurrency bound was not verified")
         return result
     finally:
         if args.smoke:

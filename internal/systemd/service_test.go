@@ -25,7 +25,7 @@ func TestRenderSecurityAndReadiness(t *testing.T) {
 		}
 	}
 	s.Port = 8443
-	s.CaptivePortal = false
+	s.HTTPPort = -1
 	s.STUNPort = 3478
 	unit, err = Render(Binary, config.DefaultPath, s)
 	if err != nil || !strings.Contains(unit, "CapabilityBoundingSet=\n") {

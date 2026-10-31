@@ -9,7 +9,7 @@ import (
 )
 
 func TestRawMapRoundTripAndDisabledSTUN(t *testing.T) {
-	c := config.Settings{Domain: "relay.example.com", Region: 900, Port: 443, STUNEnabled: false}
+	c := config.Settings{RelayEnabled: true, Domain: "relay.example.com", Region: 900, Port: 443, STUNEnabled: false}
 
 	b, err := ExportTailnetConfig(c, "derpmap")
 	if err != nil {

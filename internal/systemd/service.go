@@ -28,6 +28,16 @@ func unitPath(path string) (string, error) {
 	}
 	return strconv.Quote(path), nil
 }
+func credentialLine(name, path string) (string, error) {
+	if _, err := unitPath(path); err != nil {
+		return "", err
+	}
+	if strings.IndexFunc(path, unicode.IsSpace) >= 0 {
+		return "", errors.New("systemd 凭据路径不能包含空白字符")
+	}
+	// LoadCredential splits on the first colon without unquoting either field.
+	return "LoadCredential=" + name + ":" + path + "\n", nil
+}
 func Render(binary, path string, s config.Settings) (string, error) {
 	b, err := unitPath(binary)
 	if err != nil {
@@ -38,23 +48,25 @@ func Render(binary, path string, s config.Settings) (string, error) {
 		return "", err
 	}
 	dependency := ""
-	if s.Access == config.Tailnet {
+	if s.RelayEnabled && s.Access == config.Tailnet {
 		dependency = " tailscaled.service"
 	}
 	credential := ""
-	if s.NeedsCloudflare() {
-		if _, err := unitPath(s.TokenFile); err != nil {
-			return "", err
+	for _, source := range []struct {
+		name, path string
+		enabled    bool
+	}{{"cloudflare-token", s.TokenFile, s.NeedsCloudflare()}, {"mesh-key", s.MeshKeyFile, s.MeshKeyFile != ""}} {
+		if !source.enabled {
+			continue
 		}
-		if strings.IndexFunc(s.TokenFile, unicode.IsSpace) >= 0 {
-			return "", errors.New("systemd 凭据路径不能包含空白字符")
+		line, e := credentialLine(source.name, source.path)
+		if e != nil {
+			return "", e
 		}
-		// LoadCredential splits on the first colon without unquoting either
-		// field. Spaces also break systemd's executor serialization.
-		credential = "LoadCredential=cloudflare-token:" + s.TokenFile + "\n"
+		credential += line
 	}
 	capabilities := "CapabilityBoundingSet=\n"
-	if s.Port < 1024 || s.CaptivePortal || (s.STUNEnabled && s.STUNPort < 1024) {
+	if s.Port < 1024 || (s.HTTPPort > 0 && s.HTTPPort < 1024) || (s.STUNEnabled && s.STUNPort < 1024) {
 		capabilities = "CapabilityBoundingSet=CAP_NET_BIND_SERVICE\nAmbientCapabilities=CAP_NET_BIND_SERVICE\n"
 	}
 	return managed + fmt.Sprintf(`[Unit]
