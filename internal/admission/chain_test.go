@@ -81,3 +81,22 @@ func TestControllerReloadKeepsInflightPolicySnapshot(t *testing.T) {
 		t.Fatal("in-flight request adopted new fallback", err)
 	}
 }
+
+func TestCombinedAdmissionRespectsControllerTimeoutFallback(t *testing.T) {
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(100 * time.Millisecond):
+		}
+	}))
+	defer remote.Close()
+	c := New(Options{URL: remote.URL, FailOpen: true})
+	defer c.Close()
+	local := checkFunc(func(context.Context, tailcfg.DERPAdmitClientRequest) error { return nil })
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	request := tailcfg.DERPAdmitClientRequest{NodePublic: key.NewNode().Public()}
+	if err := All(2, local, c).VerifyClient(ctx, request); err != nil {
+		t.Fatal("configured controller timeout fallback ignored", err)
+	}
+}

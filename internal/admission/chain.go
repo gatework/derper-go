@@ -2,6 +2,7 @@ package admission
 
 import (
 	"context"
+	"errors"
 	"tailscale.com/tailcfg"
 )
 
@@ -42,5 +43,10 @@ func (c *Chain) VerifyClient(ctx context.Context, request tailcfg.DERPAdmitClien
 			return err
 		}
 	}
-	return ctx.Err()
+	// A controller may explicitly allow its own timeout after the Tailnet check
+	// succeeded. Respect that fallback; active cancellation still always denies.
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return ctx.Err()
+	}
+	return nil
 }

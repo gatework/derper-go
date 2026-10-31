@@ -22,7 +22,7 @@ def make_archive(directory, arch="amd64", version=VERSION, commit=COMMIT, extra=
     struct.pack_into("<HH", binary, 54, 56, 1)
     struct.pack_into("<I", binary, 64, 3 if interpreter else 1)
     files = {"derper-go": bytes(binary), "build-info.json": json.dumps({"version": version, "commit": commit, "os": "linux", "arch": arch}).encode()}
-    for name in ("LICENSE", "NOTICE", "README.md", "go.mod", "go.sum", "examples/config.json", "docs/DEPLOYMENT.md", "licenses/tailscale.com-LICENSE", "licenses/go-LICENSE"):
+    for name in ("LICENSE", "NOTICE", "README.md", "CHANGELOG.md", "go.mod", "go.sum", "examples/config.json", "docs/DEPLOYMENT.md", "licenses/tailscale.com-LICENSE", "licenses/go-LICENSE"):
         files[name] = b"fixture"
     with tarfile.open(path, "w:gz", format=tarfile.GNU_FORMAT) as archive:
         for name, value in files.items():

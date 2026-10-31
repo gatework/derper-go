@@ -53,7 +53,7 @@ def verify_package(path, version, commit, arch):
     path = Path(path)
     if path.name != root + ".tar.gz":
         raise ValueError("archive filename differs from its expected version/architecture")
-    required = {"derper-go", "build-info.json", "LICENSE", "NOTICE", "README.md", "go.mod", "go.sum",
+    required = {"derper-go", "build-info.json", "LICENSE", "NOTICE", "README.md", "CHANGELOG.md", "go.mod", "go.sum",
                 "examples/config.json", "docs/DEPLOYMENT.md", "licenses/tailscale.com-LICENSE", "licenses/go-LICENSE"}
     with tarfile.open(path, "r:gz") as archive:
         seen = set()

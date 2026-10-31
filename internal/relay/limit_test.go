@@ -99,7 +99,8 @@ func TestReloadDoesNotGrantAnotherBurstOrEvictConnections(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		quota := &connectionLimit{limit: 8}
 		quota.setRate(1, 2)
-		if !quota.acquire() || !quota.acquire() {
+		first, second := quota.acquire(), quota.acquire()
+		if !first || !second {
 			t.Fatal("initial burst rejected")
 		}
 		quota.update(1, 1, 2)
