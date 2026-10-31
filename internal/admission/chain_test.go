@@ -9,6 +9,7 @@ import (
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -82,21 +83,24 @@ func TestControllerReloadKeepsInflightPolicySnapshot(t *testing.T) {
 	}
 }
 
+type timeoutTransport struct{}
+
+func (timeoutTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	<-r.Context().Done()
+	return nil, r.Context().Err()
+}
+
 func TestCombinedAdmissionRespectsControllerTimeoutFallback(t *testing.T) {
-	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-r.Context().Done():
-		case <-time.After(100 * time.Millisecond):
+	synctest.Test(t, func(t *testing.T) {
+		c := New(Options{URL: "https://controller.example.com", FailOpen: true})
+		defer c.Close()
+		c.client.Transport = timeoutTransport{}
+		local := checkFunc(func(context.Context, tailcfg.DERPAdmitClientRequest) error { return nil })
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		request := tailcfg.DERPAdmitClientRequest{NodePublic: key.NewNode().Public()}
+		if err := All(2, local, c).VerifyClient(ctx, request); err != nil {
+			t.Fatal("configured controller timeout fallback ignored", err)
 		}
-	}))
-	defer remote.Close()
-	c := New(Options{URL: remote.URL, FailOpen: true})
-	defer c.Close()
-	local := checkFunc(func(context.Context, tailcfg.DERPAdmitClientRequest) error { return nil })
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
-	defer cancel()
-	request := tailcfg.DERPAdmitClientRequest{NodePublic: key.NewNode().Public()}
-	if err := All(2, local, c).VerifyClient(ctx, request); err != nil {
-		t.Fatal("configured controller timeout fallback ignored", err)
-	}
+	})
 }
