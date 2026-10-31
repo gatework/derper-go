@@ -106,6 +106,7 @@ def main():
     parser.add_argument("--connections", type=int, default=1000)
     parser.add_argument("--trial", type=int, default=1)
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--resilience-only", action="store_true")
     args = parser.parse_args()
     if os.environ.get("GITHUB_ACTIONS") != "true":
         parser.error("run this fixture only on a disposable GitHub Actions host")
@@ -128,10 +129,11 @@ def main():
     if args.trial % 2 == 0:
         versions.reverse()
     results = {}
-    for label, binary in versions:
-        print(f"{label}: {args.connections} nodes, {args.duration}s", flush=True)
-        results[label] = measure(binary, label + "-forward", "forward", args)
-    (args.output / "comparison.json").write_text(json.dumps(results, indent=2))
+    if not args.resilience_only:
+        for label, binary in versions:
+            print(f"{label}: {args.connections} nodes, {args.duration}s", flush=True)
+            results[label] = measure(binary, label + "-forward", "forward", args)
+        (args.output / "comparison.json").write_text(json.dumps(results, indent=2))
     if args.trial == 1:
         for scenario in ("idle", "slow", "reconnect", "admission"):
             for label, binary in versions:
@@ -143,6 +145,7 @@ def main():
             measure(args.candidate, "candidate-memory-" + budget, "forward", args, budget=budget)
         measure(args.candidate, "candidate-profiles", "forward", args, profiles=True)
         args.duration = original
+        (args.output / "resilience.json").write_text(json.dumps({"passed": True, "scenarios": ["idle", "slow", "reconnect", "admission", "memory", "profiles"]}, indent=2))
 
 
 if __name__ == "__main__":

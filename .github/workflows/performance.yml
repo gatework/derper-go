@@ -10,6 +10,10 @@ on:
         description: Seconds of sustained forwarding per version and trial
         type: number
         default: 600
+      resilience_only:
+        description: Run failure scenarios and profiling without repeating throughput trials
+        type: boolean
+        default: false
       connections:
         description: Connected DERP nodes (even, up to 1000)
         type: number
@@ -29,12 +33,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        trial: [1, 2, 3]
+        trial: ${{ inputs.resilience_only && fromJSON('[1]') || fromJSON('[1,2,3]') }}
     env:
       BASELINE: ${{ inputs.baseline }}
       DURATION: ${{ inputs.duration }}
       CONNECTIONS: ${{ inputs.connections }}
       TRIAL: ${{ matrix.trial }}
+      RESILIENCE_ONLY: ${{ inputs.resilience_only }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,7 +62,9 @@ jobs:
           go build -trimpath -o "$RUNNER_TEMP/load-candidate" ./integration/relayload
       - name: Compare and exercise failures on isolated processes
         run: |
-          python3 scripts/relay_benchmark.py --baseline "$RUNNER_TEMP/load-baseline" --candidate "$RUNNER_TEMP/load-candidate" --connections "$CONNECTIONS" --duration "$DURATION" --trial "$TRIAL" --output "$RUNNER_TEMP/results"
+          options=()
+          if [[ "$RESILIENCE_ONLY" == true ]]; then options+=(--resilience-only); fi
+          python3 scripts/relay_benchmark.py --baseline "$RUNNER_TEMP/load-baseline" --candidate "$RUNNER_TEMP/load-candidate" --connections "$CONNECTIONS" --duration "$DURATION" --trial "$TRIAL" --output "$RUNNER_TEMP/results" "${options[@]}"
       - name: Record revisions
         if: always()
         run: |
@@ -76,7 +83,7 @@ jobs:
           retention-days: 30
   compare:
     needs: paired
-    if: always()
+    if: always() && !inputs.resilience_only
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

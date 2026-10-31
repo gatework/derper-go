@@ -8,6 +8,7 @@ from compare_relay_benchmarks import compare
 
 class PerformanceGateTests(unittest.TestCase):
     def write_trials(self, directory, rate=1, latency=1):
+        (Path(directory) / "resilience.json").write_text(json.dumps({"passed": True, "scenarios": ["idle", "slow", "reconnect", "admission", "memory", "profiles"]}))
         for i in range(3):
             trial = Path(directory) / str(i)
             trial.mkdir()
@@ -22,6 +23,12 @@ class PerformanceGateTests(unittest.TestCase):
                 self.write_trials(directory, rate, latency)
                 self.assertEqual(compare(Path(directory)), passed)
                 self.assertTrue((Path(directory) / "REPORT.md").is_file())
+
+    def test_incomplete_fault_scenarios_block_delivery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.write_trials(directory)
+            (Path(directory) / "resilience.json").unlink()
+            self.assertFalse(compare(Path(directory)))
 
     def test_partial_and_empty_results_cannot_pass(self):
         with tempfile.TemporaryDirectory() as directory:

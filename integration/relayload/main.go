@@ -76,6 +76,7 @@ func main() {
 }
 
 type resources struct {
+	MaxRSS         uint64        `json:"max_rss_bytes"`
 	CPUSeconds     float64       `json:"cpu_seconds"`
 	RSS            uint64        `json:"rss_bytes"`
 	Heap           uint64        `json:"heap_bytes"`
@@ -188,7 +189,7 @@ func serve(ctx context.Context) error {
 			}
 		}
 		status, _ := daemon.ReadStatus(stateDir)
-		value := resources{CPUSeconds: float64(usage.Utime.Sec+usage.Stime.Sec) + float64(usage.Utime.Usec+usage.Stime.Usec)/1e6, RSS: rss, Heap: mem.HeapAlloc, Allocated: mem.TotalAlloc, GC: mem.NumGC, GCPause: mem.PauseTotalNs, GCCPUFraction: mem.GCCPUFraction, Goroutines: runtime.NumGoroutine(), FDs: len(fds), MockChecks: active.Load(), PeakMockChecks: peak.Load(), Status: status}
+		value := resources{MaxRSS: uint64(usage.Maxrss) * 1024, CPUSeconds: float64(usage.Utime.Sec+usage.Stime.Sec) + float64(usage.Utime.Usec+usage.Stime.Usec)/1e6, RSS: rss, Heap: mem.HeapAlloc, Allocated: mem.TotalAlloc, GC: mem.NumGC, GCPause: mem.PauseTotalNs, GCCPUFraction: mem.GCCPUFraction, Goroutines: runtime.NumGoroutine(), FDs: len(fds), MockChecks: active.Load(), PeakMockChecks: peak.Load(), Status: status}
 		json.NewEncoder(w).Encode(value)
 	})
 	controlListener, err := net.Listen("tcp", "127.0.0.1:19090")
@@ -243,28 +244,61 @@ type peer struct {
 }
 type measurement struct {
 	samples [1000000]atomic.Uint64
+	slow    [60001]atomic.Uint64
 	packets atomic.Uint64
 	errors  atomic.Uint64
 }
 
 func (m *measurement) record(latency time.Duration) {
-	us := min(max(int64(latency/time.Microsecond), 0), int64(len(m.samples)-1))
-	m.samples[us].Add(1)
+	us := max(int64(latency/time.Microsecond), 0)
+	if us < int64(len(m.samples)) {
+		m.samples[us].Add(1)
+	} else {
+		m.slow[min(us/1000, int64(len(m.slow)-1))].Add(1)
+	}
 	m.packets.Add(1)
 }
 func (m *measurement) percentile(fraction float64) int {
-	target := uint64(float64(m.packets.Load()) * fraction)
+	target := max(uint64(1), uint64(float64(m.packets.Load())*fraction))
+	if m.packets.Load() == 0 {
+		return 0
+	}
 	var count uint64
 	for i := range m.samples {
 		count += m.samples[i].Load()
-		if count >= max(1, target) {
+		if count >= target {
 			return i
+		}
+	}
+	for i := range m.slow {
+		count += m.slow[i].Load()
+		if count >= target {
+			return i * 1000
 		}
 	}
 	return 0
 }
 
+// Runtime status has additional fields in newer revisions. Decode only quota
+// fields so the identical fixture can also build against the baseline daemon.
+func quotasReleased(status daemon.Status) bool {
+	var value struct {
+		Connections struct{ Active int }
+		Admission   struct{ Requests, Running int }
+	}
+	b, err := json.Marshal(status)
+	if err != nil {
+		return false
+	}
+	if json.Unmarshal(b, &value) != nil {
+		return false
+	}
+	return value.Connections.Active == 0 && value.Admission.Requests == 0 && value.Admission.Running == 0
+}
+
 type report struct {
+	Samples             uint64    `json:"resource_samples"`
+	SamplingErrors      uint64    `json:"sampling_errors"`
 	Scenario            string    `json:"scenario"`
 	Connections         int       `json:"connections"`
 	Seconds             float64   `json:"seconds"`
@@ -446,12 +480,15 @@ func runClient(parent context.Context, scenario string, n int, duration time.Dur
 	start := time.Now()
 	for i, p := range peers {
 		wg.Go(func() {
-			for {
+			for measured.Err() == nil {
 				msg, err := p.client.Recv()
 				if err != nil {
 					if measured.Err() == nil {
 						m.errors.Add(1)
 					}
+					return
+				}
+				if measured.Err() != nil {
 					return
 				}
 				if packet, ok := msg.(derp.ReceivedPacket); ok {
@@ -478,9 +515,17 @@ func runClient(parent context.Context, scenario string, n int, duration time.Dur
 	}
 	if scenario != "idle" {
 		for i := 0; i < n; i += 2 {
+			if scenario == "slow" && i >= 64 {
+				break
+			}
 			sender, receiver := peers[i], peers[i+1]
 			wg.Go(func() {
 				payload := make([]byte, payloadSize)
+				var pace *time.Ticker
+				if scenario == "slow" {
+					pace = time.NewTicker(2 * time.Millisecond)
+					defer pace.Stop()
+				}
 				for measured.Err() == nil {
 					binary.LittleEndian.PutUint64(payload, uint64(time.Now().UnixNano()))
 					if err := sender.client.Send(receiver.key, payload); err != nil {
@@ -489,7 +534,13 @@ func runClient(parent context.Context, scenario string, n int, duration time.Dur
 						}
 						return
 					}
-					if scenario != "slow" {
+					if pace != nil {
+						select {
+						case <-pace.C:
+						case <-measured.Done():
+							return
+						}
+					} else {
 						select {
 						case <-receiver.ack:
 						case <-measured.Done():
@@ -500,32 +551,61 @@ func runClient(parent context.Context, scenario string, n int, duration time.Dur
 			})
 		}
 	}
-	ticker := time.NewTicker(time.Second)
+	// Sampling must not control the workload timer or silently truncate it.
+	sampleCtx, cancelSamples := context.WithCancel(ctx)
+	samples := make(chan resources, 1)
+	var samplingErrors, sampleCount atomic.Uint64
+	var sampler sync.WaitGroup
+	sampler.Go(func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-sampleCtx.Done():
+				return
+			case <-ticker.C:
+			}
+			request, cancel := context.WithTimeout(sampleCtx, 2*time.Second)
+			sample, err := metrics(request)
+			cancel()
+			if err != nil {
+				if sampleCtx.Err() == nil {
+					samplingErrors.Add(1)
+				}
+				continue
+			}
+			sampleCount.Add(1)
+			select {
+			case samples <- sample:
+			case <-sampleCtx.Done():
+				return
+			}
+		}
+	})
 collect:
 	for {
 		select {
 		case <-measured.Done():
 			break collect
-		case <-ticker.C:
-			sample, err := metrics(ctx)
-			if err != nil {
-				stop()
-				break collect
-			}
-			result.PeakRSS = max(result.PeakRSS, sample.RSS)
+		case sample := <-samples:
+			result.PeakRSS = max(result.PeakRSS, sample.MaxRSS, sample.RSS)
 			result.PeakFDs = max(result.PeakFDs, sample.FDs)
 			result.PeakGoroutines = max(result.PeakGoroutines, sample.Goroutines)
 		}
 	}
-	ticker.Stop()
+	result.Seconds = time.Since(start).Seconds()
 	stop()
+	cancelSamples()
 	closePeers(peers)
 	wg.Wait()
-	result.Seconds = time.Since(start).Seconds()
+	sampler.Wait()
+	result.Samples, result.SamplingErrors = sampleCount.Load(), samplingErrors.Load()
+
 	end, err := metrics(ctx)
 	if err != nil {
 		return err
 	}
+	result.PeakRSS = max(result.PeakRSS, end.MaxRSS)
 	result.Packets = m.packets.Load()
 	result.Errors = m.errors.Load()
 	result.Mbps = float64(result.Packets*payloadSize*8) / result.Seconds / 1e6
@@ -550,7 +630,7 @@ collect:
 		if err != nil {
 			return err
 		}
-		if result.After.FDs <= before.FDs+16 && result.After.Goroutines <= before.Goroutines+32 {
+		if result.After.FDs <= before.FDs+16 && result.After.Goroutines <= before.Goroutines+32 && quotasReleased(result.After.Status) {
 			break
 		}
 		select {
@@ -563,6 +643,12 @@ cooled:
 
 	if err = json.NewEncoder(os.Stdout).Encode(result); err != nil {
 		return err
+	}
+	if result.Samples == 0 || result.SamplingErrors > max(uint64(1), result.Samples/10) {
+		return errors.New("insufficient reliable resource samples")
+	}
+	if !quotasReleased(result.After.Status) {
+		return errors.New("connection or admission quota did not recover")
 	}
 	if scenario != "slow" && result.Errors > 0 {
 		return errors.New("unexpected connection or forwarding failures")
