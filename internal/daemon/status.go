@@ -281,8 +281,11 @@ func (h *health) monitor(ctx context.Context, get relay.CertificateSource, verif
 		}
 		if h.mesh != nil {
 			stats := meshStats
-			h.status.Mesh = Component{State: "ready", Detail: fmt.Sprintf("%d/%d 节点已连接", stats.Connected, stats.Peers)}
-			if stats.Connected < stats.Peers {
+			h.status.Mesh = Component{State: "ready", Detail: fmt.Sprintf("%d/%d 节点已连接", stats.Connected, stats.Peers-stats.Ignored)}
+			if stats.Ignored > 0 {
+				h.status.Mesh.Detail += fmt.Sprintf("（忽略 %d 个本机项）", stats.Ignored)
+			}
+			if stats.Connected < stats.Peers-stats.Ignored {
 				h.status.Mesh.State = "degraded"
 			}
 		}

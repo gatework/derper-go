@@ -121,3 +121,44 @@ func TestMeshSecretUsesSystemdSnapshotAndNeverEchoesValue(t *testing.T) {
 		t.Fatal("snapshot not used", err)
 	}
 }
+
+func TestMeshSelfEntryDoesNotConsumeConnectionQuota(t *testing.T) {
+	cert := testutil.Cert(t, "relay.example.com", 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	options := relayConfig()
+	options.MaxConnections = 1
+	options.Mesh = &MeshOptions{Key: strings.Repeat("ab", 32)}
+	server, err := Bind(ctx, options, key.NewNode(), func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return &cert.Pair, nil }, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	_, port, _ := net.SplitHostPort(server.Addr().String())
+	if err = server.prepareMesh(&MeshOptions{Key: options.Mesh.Key, Peers: []MeshPeer{{Host: net.JoinHostPort("relay.example.com", port), Dial: server.Addr().String()}}}, logger, ctx); err != nil {
+		t.Fatal(err)
+	}
+	server.mesh.clients[0].TLSConfig = &tls.Config{RootCAs: cert.Roots, ServerName: "relay.example.com"}
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(ctx) }()
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for server.Mesh().Ignored != 1 || server.Connections().Active != 0 {
+		select {
+		case <-deadline.C:
+			t.Fatal("self mesh retained quota", server.Mesh(), server.Connections())
+		case <-ticker.C:
+		}
+	}
+	native := client(t, server, key.NewNode(), cert)
+	if _, err := receive(t, native); err != nil {
+		t.Fatal("self entry starved real clients", err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}

@@ -21,8 +21,9 @@ type MeshOptions struct {
 	Key   string
 	Peers []MeshPeer
 }
-type MeshStats struct{ Peers, Connected int }
+type MeshStats struct{ Peers, Connected, Ignored int }
 type meshState struct {
+	ignored         sync.Map
 	mu              sync.Mutex
 	started, closed bool
 	ctx             context.Context
@@ -85,9 +86,13 @@ func (s *Server) startMesh() {
 	s.mesh.started = true
 	for _, client := range s.mesh.clients {
 		s.mesh.wg.Go(func() {
+			defer client.Close()
 			client.RunWatchConnectionLoop(s.mesh.ctx, s.core.PublicKey(), s.mesh.logf,
 				func(peer derp.PeerPresentMessage) { s.core.AddPacketForwarder(peer.Key, client) },
 				func(peer derp.PeerGoneMessage) { s.core.RemovePacketForwarder(peer.Peer, client) }, nil)
+			if s.mesh.ctx.Err() == nil && client.ServerPublicKey() == s.core.PublicKey() {
+				s.mesh.ignored.Store(client, true)
+			}
 		})
 	}
 }
@@ -106,6 +111,10 @@ func (s *Server) closeMesh() {
 func (s *Server) Mesh() MeshStats {
 	result := MeshStats{Peers: len(s.mesh.clients)}
 	for _, client := range s.mesh.clients {
+		if _, ignored := s.mesh.ignored.Load(client); ignored {
+			result.Ignored++
+			continue
+		}
 		if _, connected := client.TLSConnectionState(); connected {
 			result.Connected++
 		}
