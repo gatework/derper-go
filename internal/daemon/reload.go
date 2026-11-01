@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gatework/derper-go/internal/admission"
 	"github.com/gatework/derper-go/internal/certificate"
@@ -85,7 +87,11 @@ func controlPath(dir string) string {
 
 // startReloadControl is local-only: the private directory and 0600 Unix socket
 // permit only the service account and root. No control endpoint is exposed on TLS.
-func startReloadControl(dir string, reload func(context.Context, bool) (ReloadPlan, error), logger *slog.Logger, signals <-chan os.Signal) (func(), error) {
+func startReloadControl(dir, configPath string, reload func(context.Context, bool) (ReloadPlan, error), logger *slog.Logger, signals <-chan os.Signal) (func(), error) {
+	configPath, err := filepath.Abs(configPath)
+	if err != nil {
+		return nil, err
+	}
 	path := controlPath(dir)
 	if info, err := os.Lstat(path); err == nil {
 		if info.Mode()&os.ModeSocket == 0 {
@@ -138,12 +144,26 @@ func startReloadControl(dir string, reload func(context.Context, bool) (ReloadPl
 		return plan, nil
 	}
 	server := &http.Server{BaseContext: func(net.Listener) context.Context { return ctx }, ReadHeaderTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: 5 * time.Second, MaxHeaderBytes: 4096, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/reload" && r.URL.Path != "/reload/plan" {
+		if r.Method != http.MethodPost || r.URL.Path != "/config/reload" && r.URL.Path != "/config/reload/plan" {
 			http.NotFound(w, r)
 			return
 		}
-		preview := r.URL.Path == "/reload/plan"
-		plan, err := apply(r.Context(), preview)
+		preview := r.URL.Path == "/config/reload/plan"
+		plan := ReloadPlan{Changes: []string{}}
+		var input struct {
+			ConfigPath string `json:"config_path"`
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+		decoder.DisallowUnknownFields()
+		err := decoder.Decode(&input)
+		var extra any
+		if err != nil || decoder.Decode(&extra) != io.EOF || input.ConfigPath == "" {
+			err = errors.New("重载请求格式无效")
+		} else if input.ConfigPath != configPath {
+			err = errors.New("配置路径与此控制 socket 绑定的配置不同；请核对 --config 和 --state-dir")
+		} else {
+			plan, err = apply(r.Context(), preview)
+		}
 		if errors.Is(err, busy) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
@@ -202,16 +222,16 @@ func startReloadControl(dir string, reload func(context.Context, bool) (ReloadPl
 
 // Reload waits for acknowledgement from the running daemon, including rejection
 // reasons. A failed reload never reports success just because a signal was sent.
-func Reload(ctx context.Context, dir string) error {
-	_, err := reloadRequest(ctx, dir, false)
+func Reload(ctx context.Context, dir, configPath string) error {
+	_, err := reloadRequest(ctx, dir, configPath, false)
 	return err
 }
 
-func PreviewReload(ctx context.Context, dir string) (ReloadPlan, error) {
-	return reloadRequest(ctx, dir, true)
+func PreviewReload(ctx context.Context, dir, configPath string) (ReloadPlan, error) {
+	return reloadRequest(ctx, dir, configPath, true)
 }
 
-func reloadRequest(ctx context.Context, dir string, preview bool) (ReloadPlan, error) {
+func reloadRequest(ctx context.Context, dir, configPath string, preview bool) (ReloadPlan, error) {
 	var plan ReloadPlan
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -219,15 +239,26 @@ func reloadRequest(ctx context.Context, dir string, preview bool) (ReloadPlan, e
 		return (&net.Dialer{}).DialContext(ctx, "unix", controlPath(dir))
 	}}
 	defer transport.CloseIdleConnections()
-	endpoint := "http://localhost/reload"
-	if preview {
-		endpoint += "/plan"
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	configPath, err := filepath.Abs(configPath)
 	if err != nil {
 		return plan, err
 	}
-	response, err := (&http.Client{Transport: transport}).Do(request)
+	body, err := json.Marshal(struct {
+		ConfigPath string `json:"config_path"`
+	}{configPath})
+	if err != nil {
+		return plan, err
+	}
+	endpoint := "http://localhost/config/reload"
+	if preview {
+		endpoint += "/plan"
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return plan, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := (&http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(request)
 	if err != nil {
 		if ctx.Err() != nil {
 			return plan, ctx.Err()
@@ -237,9 +268,15 @@ func reloadRequest(ctx context.Context, dir string, preview bool) (ReloadPlan, e
 	defer response.Body.Close()
 	if preview && (response.StatusCode == http.StatusOK || response.StatusCode == http.StatusBadRequest) {
 		body, err := io.ReadAll(io.LimitReader(response.Body, 16<<10+1))
-		if err != nil || len(body) > 16<<10 || json.Unmarshal(body, &plan) != nil {
+		var wire struct {
+			Changes         *[]string `json:"changes"`
+			RequiresRestart *bool     `json:"requires_restart"`
+			Error           string    `json:"error"`
+		}
+		if err != nil || len(body) > 16<<10 || !utf8.Valid(body) || json.Unmarshal(body, &wire) != nil || wire.Changes == nil || wire.RequiresRestart == nil || response.StatusCode == http.StatusBadRequest && wire.Error == "" || response.StatusCode == http.StatusOK && (wire.Error != "" || *wire.RequiresRestart) {
 			return plan, errors.New("配置预览响应无效")
 		}
+		plan = ReloadPlan{Changes: *wire.Changes, RequiresRestart: *wire.RequiresRestart, Error: wire.Error}
 		if response.StatusCode != http.StatusOK {
 			return plan, errors.New(plan.Error)
 		}

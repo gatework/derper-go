@@ -29,14 +29,7 @@ func CheckReload(old, next Settings) error {
 
 // ChangedFields reports domain-facing names, never values that may contain secrets.
 func ChangedFields(old, next Settings) []string {
-	paths := map[string]string{
-		"ListenHost": "relay.listen", "Port": "relay.listen", "Homepage": "relay.homepage", "RelayEnabled": "relay.enabled", "ConnectionRate": "relay.connection_rate.per_second", "ConnectionBurst": "relay.connection_rate.burst", "MaxConnections": "relay.max_connections",
-		"TCPKeepalive": "relay.tcp.keepalive", "TCPUserTimeout": "relay.tcp.user_timeout", "TCPWriteTimeout": "relay.tcp.write_timeout", "HTTPPort": "http.port",
-		"AdmissionURL": "admission.url", "AdmissionFailOpen": "admission.fail_open", "AdmissionTimeout": "admission.timeout", "Access": "admission.mode", "MaxConcurrentChecks": "admission.max_concurrent_checks", "MaxAdmissionRequests": "admission.max_requests", "BlockedApps": "admission.blocked_apps",
-		"MeshKeyFile": "mesh.key_file", "MeshPeers": "mesh.peers", "BootstrapNames": "bootstrap_dns.names", "BootstrapUnlisted": "bootstrap_dns.unlisted",
-		"Domain": "domain", "Email": "email", "Region": "region", "STUNPort": "stun.port", "STUNEnabled": "stun.enabled", "PublishDNS": "dns.publish", "AutoIPv4": "dns.ipv4", "IPv4": "dns.ipv4", "IPv6": "dns.ipv6",
-		"CertificateFile": "certificate.file", "CertificateKey": "certificate.key", "CA": "certificate.ca", "Socket": "tailscale.socket", "ZoneID": "cloudflare.zone", "TokenFile": "cloudflare.token_file", "LogLevel": "log_level",
-	}
+
 	a, b := reflect.ValueOf(old), reflect.ValueOf(next)
 	seen := map[string]bool{}
 	for i := 0; i < a.NumField(); i++ {
@@ -44,7 +37,7 @@ func ChangedFields(old, next Settings) []string {
 			continue
 		}
 		field := a.Type().Field(i).Name
-		path, ok := paths[field]
+		path, ok := settingPaths[field]
 		if !ok {
 			path = field
 		}
@@ -56,4 +49,13 @@ func ChangedFields(old, next Settings) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+var settingPaths = map[string]string{
+	"ListenHost": "relay.listen", "Port": "relay.listen", "Homepage": "relay.homepage", "RelayEnabled": "relay.enabled", "ConnectionRate": "relay.connection_rate.per_second", "ConnectionBurst": "relay.connection_rate.burst", "MaxConnections": "relay.max_connections",
+	"TCPKeepalive": "relay.tcp.keepalive", "TCPUserTimeout": "relay.tcp.user_timeout", "TCPWriteTimeout": "relay.tcp.write_timeout", "HTTPPort": "http.port",
+	"AdmissionURL": "admission.url", "AdmissionFailOpen": "admission.fail_open", "AdmissionTimeout": "admission.timeout", "Access": "admission.mode", "MaxConcurrentChecks": "admission.max_concurrent_checks", "MaxAdmissionRequests": "admission.max_requests", "BlockedApps": "admission.blocked_apps",
+	"MeshKeyFile": "mesh.key_file", "MeshPeers": "mesh.peers", "BootstrapNames": "bootstrap_dns.names", "BootstrapUnlisted": "bootstrap_dns.unlisted",
+	"Domain": "domain", "Email": "email", "Region": "region", "STUNPort": "stun.port", "STUNEnabled": "stun.enabled", "PublishDNS": "dns.publish", "AutoIPv4": "dns.ipv4", "IPv4": "dns.ipv4", "IPv6": "dns.ipv6",
+	"CertificateFile": "certificate.file", "CertificateKey": "certificate.key", "CA": "certificate.ca", "Socket": "tailscale.socket", "ZoneID": "cloudflare.zone", "TokenFile": "cloudflare.token_file", "LogLevel": "log_level",
 }

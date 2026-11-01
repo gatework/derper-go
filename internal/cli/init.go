@@ -169,6 +169,10 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 			if e != nil {
 				return failure(ui, e)
 			}
+			next, e = checkExistingInputs(old, next, dir, existingInputs{tokenFile: tokenFile, identity: identityPath, importCertificate: importCert, importKey: importKey, manualCertificate: seen["certificate"], manualKey: seen["key"]})
+			if e != nil {
+				return failure(ui, e)
+			}
 			if changed := config.ChangedFields(old, next); len(changed) > 0 {
 				return failure(ui, fmt.Errorf("已有部署设置不同：%s；请修改配置后使用 reload 或 restart", strings.Join(changed, ", ")))
 			}

@@ -39,7 +39,7 @@ const help = `用法：derper-go <命令> [选项]
   tailnet config        输出 Tailnet 策略配置片段
 
 进阶命令：
-  config show|check|reload     查看最小配置或检查配置与本地证书
+  config show|check|reload     查看、校验或重载配置；--dry-run 预览重载
   certificate status|import|renew
                         检查、导入或续签离线证书缓存
   dns plan|apply        预览域名记录变更，确认后发布
@@ -189,9 +189,12 @@ func execute(ctx context.Context, args []string, ui terminal) (code int) {
 	if err != nil {
 		return failure(ui, err)
 	}
+	if strings.HasPrefix(name, "service/") && name != "service/render" && (path != config.DefaultPath || dir != config.DefaultDataDir) {
+		return failure(ui, errors.New("service 命令管理标准路径下的 derper-go.service；自定义部署请使用 config reload 或 systemctl"))
+	}
 	if name == "config/reload" || name == "service/reload" {
 		if dryRun {
-			plan, err := daemon.PreviewReload(ctx, dir)
+			plan, err := daemon.PreviewReload(ctx, dir, path)
 			if len(plan.Changes) > 0 {
 				fmt.Fprintln(ui.out, "变化字段：", strings.Join(plan.Changes, ", "))
 			}
@@ -200,7 +203,7 @@ func execute(ctx context.Context, args []string, ui terminal) (code int) {
 			}
 			return result(ui, err)
 		}
-		err := daemon.Reload(ctx, dir)
+		err := daemon.Reload(ctx, dir, path)
 		if err == nil {
 			fmt.Fprintln(ui.out, "配置已重载，现有中继连接保持运行。")
 		}

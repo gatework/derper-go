@@ -1,6 +1,7 @@
 package config
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -41,6 +42,15 @@ func TestReloadRejectsStructuralChanges(t *testing.T) {
 		change(&next)
 		if CheckReload(old, next) == nil {
 			t.Fatal("structural change accepted")
+		}
+	}
+}
+
+func TestEverySettingHasAnOperatorFieldName(t *testing.T) {
+	typ := reflect.TypeFor[Settings]()
+	for i := 0; i < typ.NumField(); i++ {
+		if settingPaths[typ.Field(i).Name] == "" {
+			t.Errorf("missing operator name for %s", typ.Field(i).Name)
 		}
 	}
 }

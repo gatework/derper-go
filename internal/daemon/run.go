@@ -49,8 +49,7 @@ func Check(s config.Settings) error {
 		_, err := certificate.Manual(s.Domain, s.CertificateFile, s.CertificateKey)
 		return err
 	}
-	_, err := certificate.New(CertificateOptions(s, "."), nil, nil)
-	return err
+	return CertificateOptions(s, ".").Validate()
 }
 
 func Run(parent context.Context, s config.Settings, dir string, logger *slog.Logger) error {
@@ -172,7 +171,7 @@ func run(parent context.Context, s config.Settings, dir, path string, signals <-
 	}
 	if path != "" {
 		current := s
-		closeControl, e := startReloadControl(dir, func(ctx context.Context, preview bool) (ReloadPlan, error) {
+		closeControl, e := startReloadControl(dir, path, func(ctx context.Context, preview bool) (ReloadPlan, error) {
 			return reloadConfiguration(ctx, path, &current, server, controller, live, preview)
 		}, logger, signals)
 		if e != nil {

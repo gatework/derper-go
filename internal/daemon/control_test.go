@@ -28,8 +28,9 @@ func controlDirectory(t *testing.T) string {
 
 func TestConcurrentReloadRefusesQueueAndShutdownCancelsJob(t *testing.T) {
 	dir := controlDirectory(t)
+	path := filepath.Join(dir, "config.json")
 	entered := make(chan struct{})
-	stop, err := startReloadControl(dir, func(ctx context.Context, _ bool) (ReloadPlan, error) {
+	stop, err := startReloadControl(dir, path, func(ctx context.Context, _ bool) (ReloadPlan, error) {
 		close(entered)
 		<-ctx.Done()
 		return ReloadPlan{}, ctx.Err()
@@ -39,13 +40,13 @@ func TestConcurrentReloadRefusesQueueAndShutdownCancelsJob(t *testing.T) {
 	}
 	defer stop()
 	done := make(chan error, 1)
-	go func() { done <- Reload(t.Context(), dir) }()
+	go func() { done <- Reload(t.Context(), dir, path) }()
 	select {
 	case <-entered:
 	case <-time.After(time.Second):
 		t.Fatal("reload did not start")
 	}
-	if err := Reload(t.Context(), dir); err == nil {
+	if err := Reload(t.Context(), dir, path); err == nil {
 		t.Fatal("concurrent reload queued")
 	}
 	stop()
@@ -62,6 +63,7 @@ func TestConcurrentReloadRefusesQueueAndShutdownCancelsJob(t *testing.T) {
 
 func TestPreviewCannotApplyAgainstOlderControlServer(t *testing.T) {
 	dir := controlDirectory(t)
+	path := filepath.Join(dir, "config.json")
 	listener, err := net.Listen("unix", controlPath(dir))
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +79,45 @@ func TestPreviewCannotApplyAgainstOlderControlServer(t *testing.T) {
 	})}
 	defer server.Close()
 	go server.Serve(listener)
-	if _, err := PreviewReload(t.Context(), dir); err == nil || applied.Load() != 0 {
+	if _, err := PreviewReload(t.Context(), dir, path); err == nil || applied.Load() != 0 {
 		t.Fatal("old daemon applied preview", err)
+	}
+}
+
+func TestReloadRejectsWrongConfigurationAndMalformedPreview(t *testing.T) {
+	dir := controlDirectory(t)
+	path := filepath.Join(dir, "config.json")
+	var calls atomic.Int32
+	stop, err := startReloadControl(dir, path, func(context.Context, bool) (ReloadPlan, error) {
+		calls.Add(1)
+		return ReloadPlan{Changes: []string{}}, nil
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	wrong := filepath.Join(dir, "other.json")
+	if err := Reload(t.Context(), dir, wrong); err == nil || calls.Load() != 0 {
+		t.Fatal("wrong config applied", err)
+	}
+	if _, err := PreviewReload(t.Context(), dir, wrong); err == nil || calls.Load() != 0 {
+		t.Fatal("wrong config previewed", err)
+	}
+	if _, err := PreviewReload(t.Context(), dir, path); err != nil || calls.Load() != 1 {
+		t.Fatal(err, calls.Load())
+	}
+	stop()
+	for _, body := range []string{`{}`, `{"changes":[],"requires_restart":false} {}`, `{"changes":null,"requires_restart":false}`, `{"changes":[],"requires_restart":true}`} {
+		listener, err := net.Listen("unix", controlPath(dir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, body) })}
+		go server.Serve(listener)
+		_, err = PreviewReload(t.Context(), dir, path)
+		server.Close()
+		if err == nil {
+			t.Fatal("malformed preview accepted", body)
+		}
 	}
 }

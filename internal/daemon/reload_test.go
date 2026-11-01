@@ -81,7 +81,7 @@ func TestReloadKeepsLiveRelayAndRejectsPartialConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stop, err := startReloadControl(dir, func(ctx context.Context, preview bool) (ReloadPlan, error) {
+	stop, err := startReloadControl(dir, path, func(ctx context.Context, preview bool) (ReloadPlan, error) {
 		return reloadConfiguration(ctx, path, &current, server, nil, live, preview)
 	}, logger, nil)
 	if err != nil {
@@ -135,14 +135,14 @@ func TestReloadKeepsLiveRelayAndRejectsPartialConfiguration(t *testing.T) {
 	c.Relay.MaxConnections = 1
 	c.Relay.Homepage = "https://example.com"
 	save()
-	plan, err := PreviewReload(ctx, dir)
+	plan, err := PreviewReload(ctx, dir, path)
 	if err != nil || len(plan.Changes) == 0 || plan.RequiresRestart || current.MaxConnections != 4 || server.Connections().Limit != 4 {
 		t.Fatal("preview applied configuration", plan, err)
 	}
 	if pair, err := get(nil); err != nil || pair.Leaf.SerialNumber.Int64() != 1 {
 		t.Fatal("preview replaced live certificate", err)
 	}
-	if err = Reload(ctx, dir); err != nil {
+	if err = Reload(ctx, dir, path); err != nil {
 		t.Fatal(err)
 	}
 	if server.Connections().Active != 2 || server.Connections().Limit != 1 {
@@ -158,7 +158,7 @@ func TestReloadKeepsLiveRelayAndRejectsPartialConfiguration(t *testing.T) {
 	}
 	c.Relay.MaxConnections = 4
 	save()
-	if err = Reload(ctx, dir); err != nil {
+	if err = Reload(ctx, dir, path); err != nil {
 		t.Fatal(err)
 	}
 	connection, err := tls.DialWithDialer(&net.Dialer{Timeout: time.Second}, "tcp", server.Addr().String(), &tls.Config{RootCAs: second.Roots, ServerName: "relay.example.com"})
@@ -172,10 +172,10 @@ func TestReloadKeepsLiveRelayAndRejectsPartialConfiguration(t *testing.T) {
 	c.Relay.Listen = "127.0.0.1:1"
 	c.Relay.MaxConnections = 9
 	save()
-	if plan, err := PreviewReload(ctx, dir); err == nil || !plan.RequiresRestart || server.Connections().Limit != 4 {
+	if plan, err := PreviewReload(ctx, dir, path); err == nil || !plan.RequiresRestart || server.Connections().Limit != 4 {
 		t.Fatal("restart requirement lost", plan, err)
 	}
-	if err = Reload(ctx, dir); err == nil || server.Connections().Limit != 4 {
+	if err = Reload(ctx, dir, path); err == nil || server.Connections().Limit != 4 {
 		t.Fatal("structural reload partially applied", err)
 	}
 	c.Relay.Listen = server.Addr().String()
@@ -183,7 +183,7 @@ func TestReloadKeepsLiveRelayAndRejectsPartialConfiguration(t *testing.T) {
 	if err = os.WriteFile(keyPath, []byte("incomplete-key"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err = Reload(ctx, dir); err == nil || server.Connections().Limit != 4 {
+	if err = Reload(ctx, dir, path); err == nil || server.Connections().Limit != 4 {
 		t.Fatal("invalid certificate partially applied", err)
 	}
 	if pair, err := get(nil); err != nil || pair.Leaf.SerialNumber.Int64() != 2 {
