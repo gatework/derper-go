@@ -5,7 +5,7 @@ on:
       baseline:
         description: Full baseline commit SHA
         required: true
-        default: 9c6a15641d1c0440fcedd9e67688da6c757ddb42
+        default: b984078e8d2cd0fbd84dfdcc09137b53eeed62c4
       duration:
         description: Seconds of sustained forwarding per version and trial
         type: number
@@ -60,6 +60,23 @@ jobs:
           cp integration/relayload/*.go "$RUNNER_TEMP/baseline/integration/relayload/"
           (cd "$RUNNER_TEMP/baseline" && go build -trimpath -o "$RUNNER_TEMP/load-baseline" ./integration/relayload)
           go build -trimpath -o "$RUNNER_TEMP/load-candidate" ./integration/relayload
+      - name: Measure control-plane costs separately from forwarding
+        if: matrix.trial == 1
+        env:
+          GOWORK: 'off'
+          GOMAXPROCS: '2'
+        run: |
+          mkdir -p "$RUNNER_TEMP/results"
+          cp internal/cloudflare/benchmark_test.go "$RUNNER_TEMP/baseline/internal/cloudflare/benchmark_test.go"
+          for round in 1 2 3 4 5; do
+            order=(baseline candidate)
+            if (( round % 2 == 0 )); then order=(candidate baseline); fi
+            for revision in "${order[@]}"; do
+              source="$GITHUB_WORKSPACE"
+              if [[ "$revision" == baseline ]]; then source="$RUNNER_TEMP/baseline"; fi
+              (cd "$source" && go test ./internal/cloudflare ./internal/relay -run '^$' -bench 'BenchmarkListRecords|BenchmarkConnectionQuota' -benchmem -benchtime=500ms) >> "$RUNNER_TEMP/results/control-$revision.txt"
+            done
+          done
       - name: Compare and exercise failures on isolated processes
         run: |
           options=()

@@ -45,9 +45,9 @@ HTTPS 默认选择 443，占用时建议 8443。两者都被占用时退出并�
 
 ACME 使用 DNS-01，不需要 HTTP 80。生产和 staging 使用独立缓存；新 CA 的条款接受不能沿用旧 CA 记录。需要切换 CA 时先使用独立配置和状态目录初始化，确认结果后再安排服务变更。
 
-有效缓存允许在 Cloudflare/CA 暂时故障期间继续提供中继。续期失败显示为证书维护异常，未过期证书仍可用；过期证书拒绝新 TLS 握手。TLS 热更新只发生在完整证书原子写入成功后。
+有效缓存允许在 Cloudflare/CA 暂时故障期间继续提供中继。续期失败显示为证书维护异常，未过期证书仍可用；过期证书拒绝新 TLS 握手。完整证书原子发布后投入服务。若发布后的目录同步失败，仍保留有效 TLS 快照，后台重试本地同步并报告维护错误，不重新向 CA 下单。
 
-手动证书可用 `init --certificate cert.pem --key key.pem`，不需要 ACME 邮箱或条款；若仍发布 DNS，则仍需 Cloudflare Token。手动证书文件在启动时读取，更新后重启。
+手动证书可用 `init --certificate cert.pem --key key.pem`，不需要 ACME 邮箱或条款；若仍发布 DNS，则仍需 Cloudflare Token。手动证书文件在启动或 `config reload` 时读取并验证，更新后先用 `config reload --dry-run` 预览。
 
 systemd 启动时要求 LoadCredential 的源文件存在且可读；有效缓存不能绕过 systemd 对缺失凭据文件的检查。凭据内容无效或 Cloudflare API 不可用时，已有有效证书仍可投入服务。
 
@@ -108,3 +108,12 @@ v0.2.0 提供 `service reload`、`config reload`、systemd `reload` 和 SIGHUP�
 - 已批准、处于 `prepared` 的系统服务安装可通过再次执行 `init` 继续启动。`--no-start` / `--no-service` 仍保留其原有意图；恢复前核对配置与已批准安装一致。
 
 升级后核对身份、公钥、证书、DNS 归属和 Tailnet 区域保持一致，再从两台授权设备验证实际转发。gz 的固定 IPv4 和 sing-box 回包路由继续保留，不能改为通过代理出口自动发现地址。
+
+
+## 初始化预览与重复执行
+
+在正式安装参数后添加 `--dry-run`，即可只读核对端口、Tailnet、Cloudflare 记录及 CA 条款；无需 `--yes` 或 `--accept-terms`。预览仍需要读取凭据和访问相关查询接口。它不会创建配置、状态、服务用户或证书。已有 ready/prepared 部署只校验显式输入并报告阶段，不恢复安装或启动服务。
+
+重复提供 `--token-file`、`--identity`、`--import-certificate/--import-key` 时，会核对现有内容；手动证书来源路径不同但证书链与密钥匹配时允许重复运行。差异会拒绝，不隐式轮换或导入。Token 轮换按“证书与凭据”执行；自动证书缓存更新使用离线 `certificate import`，手动证书更新使用重载，身份替换需要独立迁移安排。
+
+未知 A/AAAA 创建结果保留两分钟核对窗口，未知 TXT 创建结果保留一分钟。已有 ID 的 TXT 清理精确查询该记录；普通 HTTP 404 不能证明记录不存在。仅在归属和内容一致时删除，远端异常或外部修改时保留日志。Cloudflare API 检查与写入之间仍存在外部并发修改窗口，应保持同一记录只有一个管理方。

@@ -18,7 +18,12 @@ type UncertainError struct{ Cause error }
 // NotSentError proves that request preparation failed before handing it to HTTP.
 type NotSentError struct{ Cause error }
 
-func (e *NotSentError) Error() string { return "cloudflare request was not sent: " + e.Cause.Error() }
+func (e *NotSentError) Error() string {
+	if e.Cause == nil {
+		return "cloudflare request was not sent"
+	}
+	return "cloudflare request was not sent: " + e.Cause.Error()
+}
 func (e *NotSentError) Unwrap() error { return e.Cause }
 
 func (e *UncertainError) Error() string {
@@ -38,12 +43,15 @@ func (e *Error) Is(target error) bool {
 	if target != ErrNotFound || !e.Rejected || e.Status != 404 {
 		return false
 	}
+	if len(e.Codes) == 0 {
+		return false
+	}
 	for _, code := range e.Codes {
-		if code == 81044 {
-			return true
+		if code != 81044 {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // Close releases only a transport created by this client; injected clients are borrowed.

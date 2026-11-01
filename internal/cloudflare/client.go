@@ -67,6 +67,9 @@ type response struct {
 }
 
 func (c *Client) request(ctx context.Context, method, path string, body any) (*response, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, &NotSentError{Cause: err}
+	}
 	var buf bytes.Buffer
 	if body != nil {
 		if err := json.NewEncoder(&buf).Encode(body); err != nil {
@@ -143,6 +146,11 @@ func (c *Client) doRequest(req *http.Request) (out *response, result error) {
 			}
 		}
 		apiErr.Rejected = decodeErr == nil && decoded.Success != nil && !*decoded.Success && len(decoded.Errors) > 0 && res.StatusCode >= 400 && res.StatusCode < 500 && res.StatusCode != 408
+		for _, code := range apiErr.Codes {
+			if code <= 0 {
+				apiErr.Rejected = false
+			}
+		}
 		// Neither decoding errors nor upstream bodies may echo a credential.
 		return nil, apiErr
 	}

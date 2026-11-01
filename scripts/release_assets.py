@@ -4,6 +4,8 @@
 import argparse
 import hashlib
 import json
+import io
+import subprocess
 from pathlib import Path, PurePosixPath
 import re
 import struct
@@ -33,6 +35,34 @@ def validate_version(version, allow_dev=False):
 def validate_commit(commit):
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("commit must be the full 40-character Git SHA")
+
+
+def source_snapshot(repository, commit, destination):
+    """Extract only regular tracked files belonging to the exact clean HEAD."""
+    validate_commit(commit)
+    repository, destination = Path(repository), Path(destination)
+    def git(*args):
+        return subprocess.check_output(["git", "-C", str(repository), *args])
+    if git("rev-parse", "HEAD").decode().strip() != commit:
+        raise ValueError("package commit must match HEAD")
+    if subprocess.run(["git", "-C", str(repository), "diff", "--quiet", "HEAD", "--"]).returncode:
+        raise ValueError("tracked source must be clean before packaging")
+    destination.mkdir(parents=True, exist_ok=False)
+    with tarfile.open(fileobj=io.BytesIO(git("archive", "--format=tar", commit))) as archive:
+        for member in archive:
+            name = PurePosixPath(member.name)
+            if name.is_absolute() or ".." in name.parts or not (member.isfile() or member.isdir()):
+                raise ValueError("source snapshot contains an unsafe path or link")
+            target = destination.joinpath(*name.parts)
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.extractfile(member) as source, target.open("xb") as output:
+                    for chunk in iter(lambda: source.read(1 << 20), b""):
+                        output.write(chunk)
+                target.chmod(member.mode & 0o777)
+    return destination
 
 
 def package_name(version, arch):
@@ -122,6 +152,9 @@ def main():
     verify.add_argument("version")
     verify.add_argument("commit")
     verify.add_argument("arch")
+    snapshot = commands.add_parser("snapshot")
+    snapshot.add_argument("commit")
+    snapshot.add_argument("destination", type=Path)
     manifest = commands.add_parser("checksums")
     manifest.add_argument("directory", type=Path)
     manifest.add_argument("version")
@@ -131,11 +164,13 @@ def main():
         if args.command == "version":
             prerelease = validate_version(args.version, args.allow_dev)
             print(f"version={args.version}\nprerelease={str(prerelease).lower()}")
+        elif args.command == "snapshot":
+            source_snapshot(Path.cwd(), args.commit, args.destination)
         elif args.command == "verify":
             verify_package(args.archive, args.version, args.commit, args.arch)
         else:
             write_checksums(args.directory, args.version, args.commit)
-    except (ValueError, OSError, tarfile.TarError) as error:
+    except (ValueError, OSError, tarfile.TarError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"release validation failed: {error}\n")
 
 

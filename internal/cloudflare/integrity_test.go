@@ -96,6 +96,7 @@ func TestWriteFailureClassificationAndNoReplay(t *testing.T) {
 		uncertain bool
 	}{
 		{`{"success":false,"errors":[{"code":10000,"message":"fixture-secret"}]}`, 403, false},
+		{`{"success":false,"errors":[{}]}`, 403, true},
 		{`<html>fixture-secret</html>`, 403, true},
 		{`{"success":false,"errors":[{"code":1000}]}`, 503, true},
 	} {

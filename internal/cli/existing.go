@@ -35,7 +35,7 @@ func checkExistingInputs(current, requested config.Settings, dir string, input e
 			return requested, err
 		}
 		if source != deployed {
-			return requested, errors.New("Cloudflare 凭据与已有部署不同；请更新已配置的凭据文件，并对 systemd 服务执行 service restart")
+			return requested, errors.New("提供的 Cloudflare 凭据与已有部署不同；请更新已配置的凭据文件，并对 systemd 服务执行 service restart")
 		}
 	}
 	if input.identity != "" {

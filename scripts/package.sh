@@ -5,11 +5,12 @@ cd "$(dirname "$0")/.."
 GO=${GO:-go}
 VERSION=${VERSION:-dev}
 COMMIT=${COMMIT:-$(git rev-parse HEAD)}
-SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git show -s --format=%ct "$COMMIT")}
+export GOWORK=off GOFLAGS=
 DIST_DIR=${DIST_DIR:-dist}
 read -r -a architectures <<< "${ARCHES:-amd64 arm64}"
 python3 scripts/release_assets.py version "$VERSION" --allow-dev >/dev/null
 [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]
+SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$COMMIT")
 [[ "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]]
 ((${#architectures[@]} > 0))
 for arch in "${architectures[@]}"; do
@@ -19,6 +20,8 @@ mkdir -p "$DIST_DIR"
 output=$(cd "$DIST_DIR" && pwd)
 work=$(mktemp -d "$output/.package.XXXXXX")
 trap 'rm -rf "$work"' EXIT
+python3 scripts/release_assets.py snapshot "$COMMIT" "$work/source"
+cd "$work/source"
 mkdir -p "$work/common/licenses"
 cp LICENSE NOTICE README.md CHANGELOG.md go.mod go.sum "$work/common/"
 cp -R docs examples "$work/common/"

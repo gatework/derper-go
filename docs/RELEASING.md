@@ -85,4 +85,4 @@ make package VERSION=v0.1.0
 make package VERSION=v0.1.0 ARCHES=arm64 DIST_DIR=dist-arm64
 ```
 
-`COMMIT` 默认取完整 Git SHA，`SOURCE_DATE_EPOCH` 默认取该提交的时间。只有 CI 对受检标签生成并证明的附件才作为正式发布来源；本地打包不会自动创建标签或 Release。
+`COMMIT` 必须是当前 HEAD 的完整 Git SHA，受跟踪源码必须干净。打包通过 Git archive 提取此提交，只包含受跟踪的普通文件和目录，未跟踪文件、忽略文件和链接不会进入发行包。构建强制 `GOWORK=off` 并清空 `GOFLAGS`，排除外部工作区、overlay 和 modfile 的影响；时间戳固定取该提交时间。只有 CI 对受检标签生成并证明的附件才作为正式发布来源；本地打包不会自动创建标签或 Release。

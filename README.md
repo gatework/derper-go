@@ -49,9 +49,10 @@ sudo ./derper-go init \
 
 Token 也可通过 `CLOUDFLARE_API_TOKEN` 传入，不支持明文 Token 命令参数。`--yes` 批准安装摘要，包括预览中可接管的 DNS 记录；它不代表接受证书机构条款。
 
+- `init --dry-run`：只读预检并显示安装摘要，不保存配置、安装服务、签发证书或修改 DNS；已有部署也不执行恢复。
 - `init --no-start`：安装并启用服务，暂不启动；随后使用 `service start`。
 - `init --no-service`：只生成前台配置，默认写入当前目录 `config.json`；按输出的 `run` 命令启动。
-- 重复 `init`：已完成部署显示状态，保留配置、节点身份和证书。修改已有配置后使用 `service restart`，会同步更新所需端口权限和凭据来源。
+- 重复 `init`：显式提供的设置、凭据、身份和证书必须与已有部署一致；一致时保留配置、节点身份和证书，差异会明确报错。配置变更先用 `config reload --dry-run` 预览，结构性变更使用 `service restart`。
 - 初始化中断：修复错误后重试同一命令，继续尚未完成的准备工作。若服务已准备但启动失败，使用 `service start`；DNS 暂时失败时服务保留并自动重试。
 - 终端直接运行 `derper-go`：首次进入向导，已有默认配置时显示状态；非终端无参数只显示帮助。
 
@@ -65,7 +66,7 @@ Token 也可通过 `CLOUDFLARE_API_TOKEN` 传入，不支持明文 Token 命令�
 | `region` | 900；Tailnet 模式初始化时从本机 DERPMap 的 900–999 中选择空闲编号并保存 |
 | `admission.mode` | `tailnet`；可选 `controller` 或显式 `public` |
 | `certificate.ca` | `letsencrypt`；可选 `staging` 或 HTTPS ACME 目录 |
-| `certificate.file`、`certificate.key` | 同时提供时使用手动 PEM 证书，邮箱可省略；手动证书更新后重启 |
+| `certificate.file`、`certificate.key` | 同时提供时使用手动 PEM 证书，邮箱可省略；手动证书更新后执行 `config reload` |
 | `dns.publish` | `true`；设置 `false` 关闭 A/AAAA 发布，ACME TXT 仍独立维护 |
 | `dns.ipv4` | `auto`；可用公网 IPv4 固定地址或 `off` |
 | `dns.ipv6` | 默认不发布；填写公网 IPv6 后发布 AAAA |
@@ -86,6 +87,7 @@ IPv4 探测依次使用 ipify 和 AWS Check IP 的 HTTPS 接口，强制 IPv4、
 | `status [--json]` | 分别报告中继就绪、证书、DNS 和 Tailnet 状态 |
 | `doctor [--json]` | 只读检查 DNS、TLS、STUN 与 tailscaled |
 | `tailnet config [--format derpmap]` | 导出策略片段或原始 DERPMap |
+| `config reload [--dry-run]`、`service reload [--dry-run]` | 同步重载或只读预览变化字段、验证结果与重启要求 |
 | `config show`、`config check` | 查看最小配置；检查配置及本地证书，不联网或创建状态 |
 | `dns plan`、`dns apply [--yes]` | 预览；重新检查确认快照后离线发布 |
 | `certificate status` | 查看当前证书有效期与序列号 |
@@ -94,7 +96,7 @@ IPv4 探测依次使用 ipify 和 AWS Check IP 的 HTTPS 接口，强制 IPv4、
 | `service render` | 输出 systemd 单元 |
 | `service start/stop/restart/logs` | 操作独立的 `derper-go.service` |
 
-命令使用 `-c` 指定配置；前台部署可用 `--state-dir` 指定状态目录。退出码：成功 0、操作或配置错误 1、命令语法错误 2、运行取消 130。服务和离线写操作共用排他状态锁；服务自动续期，无需额外 cron。
+命令使用 `-c` 指定配置；前台部署可用 `--state-dir` 指定状态目录。退出码：成功 0、操作或配置错误 1、命令语法错误 2、Cloudflare 写入结果不确定 5、运行取消 130。若取消发生在不确定写入后，优先返回 5，恢复日志会保留。服务和离线写操作共用排他状态锁；服务自动续期，无需额外 cron。
 
 服务使用 `Type=notify`，证书可用且 TLS 接收循环已启动才发送就绪通知。DNS 发布在此之后进行；DNS 发布失败会让首次初始化返回错误，同时保留可用中继并重试。已有有效证书时，Cloudflare/CA 暂时不可用不阻塞中继启动。证书续期以原子快照生效；过期证书拒绝新握手。
 
@@ -136,6 +138,6 @@ MIT 许可；上游来源及许可证见 [NOTICE](NOTICE)。
 
 运行参数已按领域统一，详见 [配置参考](docs/CONFIGURATION.md)。使用 `config show --effective` 查看默认值；监听地址、准入控制器、Mesh 和 bootstrap DNS 均使用结构化设置。旧的顶层 `port`、`access`、`captive_portal` 和 `tailscale.max_concurrent_checks` 已移除，请按配置参考转换后运行 `config check`。
 
-本轮审查问题、修复验证与 1,000 连接实测数据见 [代码审查记录](docs/REVIEW.md)。
+既有 1,000 连接实测数据见 [上一轮审查记录](docs/REVIEW.md)；本轮问题、控制面测量及交付验证见 [本轮审查记录](docs/REVIEW-2.md)。
 
 现有官方节点迁移、组合准入和无断连配置重载见 [部署说明](docs/DEPLOYMENT.md) 与 [配置参考](docs/CONFIGURATION.md)。版本变更见 [CHANGELOG.md](CHANGELOG.md)。
