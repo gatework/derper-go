@@ -73,7 +73,7 @@ func New(options Options) *Controller {
 	}
 	options.MaxRequests = min(options.MaxRequests, 8192)
 	options.MaxConcurrentChecks = min(options.MaxConcurrentChecks, 128, options.MaxRequests)
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport := &http.Transport{Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: true, ExpectContinueTimeout: time.Second}
 	transport.DialContext = (&net.Dialer{Timeout: time.Second}).DialContext
 	transport.ResponseHeaderTimeout = 3 * time.Second
 	transport.TLSHandshakeTimeout = 3 * time.Second

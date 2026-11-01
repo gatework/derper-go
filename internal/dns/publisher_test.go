@@ -15,6 +15,7 @@ import (
 )
 
 type fakeAPI struct {
+	createError           error
 	records               []cloudflare.Record
 	creates, patches      int
 	loseCreate, losePatch bool
@@ -25,6 +26,9 @@ func (f *fakeAPI) ListRecords(ctx context.Context, _ string) ([]cloudflare.Recor
 	return append([]cloudflare.Record(nil), f.records...), ctx.Err()
 }
 func (f *fakeAPI) CreateRecord(ctx context.Context, r cloudflare.Record) (string, error) {
+	if f.createError != nil {
+		return "", f.createError
+	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -250,5 +254,22 @@ func TestApprovedSnapshotCannotAuthorizeConcurrentMutation(t *testing.T) {
 	f.records[0].Comment = "derper-go:foreign:A"
 	if _, err = c.Plan(context.Background()); err == nil {
 		t.Fatal("offered adoption of foreign-owned record")
+	}
+}
+
+func TestUnsentWriteDoesNotRetainPendingIntent(t *testing.T) {
+	c, api := publisher(t)
+	api.createError = &cloudflare.NotSentError{Cause: errors.New("credential unavailable")}
+	_, err := c.Apply(t.Context())
+	if err == nil || errors.Is(err, cloudflare.ErrUncertainWrite) {
+		t.Fatal(err)
+	}
+	j, readErr := c.load()
+	if readErr != nil || len(j.Pending) != 0 || api.creates != 0 {
+		t.Fatal(j, readErr)
+	}
+	api.createError = nil
+	if _, err := c.Apply(t.Context()); err != nil || api.creates != 1 {
+		t.Fatal(err, api.creates)
 	}
 }

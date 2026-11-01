@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gatework/derper-go/internal/cloudflare"
 	"golang.org/x/crypto/acme"
 )
 
@@ -160,6 +161,11 @@ func (m *Renewer) authorize(ctx context.Context, client *acme.Client, authURL st
 	published.Content = strconv.Quote(value)
 	pending.ID, err = m.dns.CreateRecord(ctx, published)
 	if err != nil {
+		var unsent *cloudflare.NotSentError
+		var api *cloudflare.Error
+		if errors.As(err, &unsent) || errors.As(err, &api) && api.Rejected {
+			return errors.Join(err, os.Remove(journal))
+		}
 		return err
 	}
 	data, _ = json.Marshal(pending)
@@ -210,7 +216,19 @@ func (m *Renewer) cleanupPending(parent context.Context) (result error) {
 	if err = m.dns.CheckZone(ctx, m.options.Domain); err != nil {
 		return err
 	}
-	records, err := m.dns.ListRecords(ctx, pending.Name)
+	var records []record
+	if pending.ID != "" {
+		var current record
+		current, err = m.dns.GetRecord(ctx, pending.ID)
+		if errors.Is(err, cloudflare.ErrNotFound) {
+			return os.Remove(path)
+		}
+		if err == nil {
+			records = []record{current}
+		}
+	} else {
+		records, err = m.dns.ListRecords(ctx, pending.Name)
+	}
 	if err != nil {
 		return err
 	}

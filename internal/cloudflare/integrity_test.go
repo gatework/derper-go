@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -26,6 +27,51 @@ func TestMissingPaginationContinuesUntilEmpty(t *testing.T) {
 	records, err := c.ListRecords(t.Context(), "relay.example.com")
 	if err != nil || len(records) != 2 || calls != 3 {
 		t.Fatal(len(records), calls, err)
+	}
+}
+
+func TestQueryBudgetAndChangingStatistics(t *testing.T) {
+	for _, mode := range []string{"budget", "count", "changing", "wrong-name"} {
+		t.Run(mode, func(t *testing.T) {
+			calls := 0
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+				name, content, total, count := "relay.example.com", "x", 20, 1
+				if mode == "budget" {
+					content = strings.Repeat("x", 900<<10)
+				}
+				if mode == "count" {
+					count = 2
+				}
+				if mode == "changing" && page > 1 {
+					total = 21
+				}
+				if mode == "wrong-name" {
+					name = "other.example.com"
+				}
+				fmt.Fprintf(w, `{"success":true,"result":[{"id":"%d","name":%q,"type":"TXT","content":%q}],"result_info":{"page":%d,"count":%d,"total_pages":%d}}`, page, name, content, page, count, total)
+			}))
+			defer s.Close()
+			c := New("fixture", "zone", s.Client())
+			c.baseURL = s.URL
+			if _, err := c.ListRecords(t.Context(), "relay.example.com"); err == nil {
+				t.Fatal("invalid query accepted", mode, calls)
+			}
+		})
+	}
+}
+
+func TestRecordAbsenceRequiresCloudflareProof(t *testing.T) {
+	for _, body := range []string{`{"success":false,"errors":[{"code":81044}]}`, `{"success":false,"errors":[{"code":7003}]}`, `<html>not found</html>`} {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(404); fmt.Fprint(w, body) }))
+		c := New("fixture", "zone", s.Client())
+		c.baseURL = s.URL
+		_, err := c.GetRecord(t.Context(), "record")
+		s.Close()
+		if errors.Is(err, ErrNotFound) != (strings.Contains(body, "81044")) {
+			t.Fatal(body, err)
+		}
 	}
 }
 

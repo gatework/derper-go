@@ -10,13 +10,29 @@ import (
 	"strconv"
 )
 
-var ErrUncertainWrite = errors.New("Cloudflare 写入结果不确定，已保留恢复日志；未重放写请求")
-var ErrNotFound = errors.New("Cloudflare DNS record not found")
+var ErrUncertainWrite = errors.New("写入 Cloudflare 的结果不确定，已保留恢复日志；未重放写请求")
+var ErrNotFound = errors.New("cloudflare DNS record not found")
 
 type UncertainError struct{ Cause error }
 
-func (e *UncertainError) Error() string   { return ErrUncertainWrite.Error() + ": " + e.Cause.Error() }
-func (e *UncertainError) Unwrap() []error { return []error{ErrUncertainWrite, e.Cause} }
+// NotSentError proves that request preparation failed before handing it to HTTP.
+type NotSentError struct{ Cause error }
+
+func (e *NotSentError) Error() string { return "cloudflare request was not sent: " + e.Cause.Error() }
+func (e *NotSentError) Unwrap() error { return e.Cause }
+
+func (e *UncertainError) Error() string {
+	if e.Cause == nil {
+		return ErrUncertainWrite.Error()
+	}
+	return ErrUncertainWrite.Error() + ": " + e.Cause.Error()
+}
+func (e *UncertainError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{ErrUncertainWrite}
+	}
+	return []error{ErrUncertainWrite, e.Cause}
+}
 
 func (e *Error) Is(target error) bool {
 	if target != ErrNotFound || !e.Rejected || e.Status != 404 {

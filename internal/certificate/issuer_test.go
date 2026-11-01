@@ -105,6 +105,18 @@ func (f *acmeFixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request
 			}
 			send(map[string]any{"success": true, "result": map[string]string{"id": id}})
 		case r.Method == http.MethodGet:
+			if !strings.HasSuffix(r.URL.Path, "/dns_records") {
+				id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+				for _, record := range f.txt {
+					if record.ID == id {
+						send(map[string]any{"success": true, "result": record})
+						return
+					}
+				}
+				w.WriteHeader(http.StatusNotFound)
+				send(map[string]any{"success": false, "errors": []map[string]int{{"code": 81044}}})
+				return
+			}
 			result := []record{}
 			if r.URL.Query().Get("name") == f.domain {
 				if f.a.ID != "" {

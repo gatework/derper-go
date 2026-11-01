@@ -277,7 +277,8 @@ func (c *Publisher) Apply(ctx context.Context, approved ...cloudflare.Record) ([
 		}
 		if err != nil {
 			var api *cloudflare.Error
-			if errors.As(err, &api) && api.Rejected {
+			var unsent *cloudflare.NotSentError
+			if errors.As(err, &unsent) || errors.As(err, &api) && api.Rejected {
 				delete(j.Pending, desired.Type)
 				return changes, errors.Join(err, c.save(j))
 			}

@@ -1,6 +1,7 @@
 package certificate
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -13,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"syscall"
 	"time"
 
@@ -150,13 +152,8 @@ func (m *Store) installWith(bundle []byte, write func(string, []byte) error) err
 
 // ReadCachedCertificate reads an existing valid leaf without credentials, network or cache writes.
 func ReadCachedCertificate(c Options) ([]byte, error) {
-	m, err := New(c, nil, nil)
+	m, err := readCachedStore(c)
 	if err != nil {
-		return nil, err
-	}
-	sum := sha256.Sum256([]byte(m.options.DirectoryURL + "\n" + m.options.Domain))
-	m.cachePath = filepath.Join(m.options.CacheDir, hex.EncodeToString(sum[:]))
-	if err = m.loadCertificate(); err != nil {
 		return nil, err
 	}
 	pair, err := m.GetCertificate(nil)
@@ -164,6 +161,37 @@ func ReadCachedCertificate(c Options) ([]byte, error) {
 		return nil, err
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: pair.Certificate[0]}), nil
+}
+
+func readCachedStore(c Options) (*Store, error) {
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	c = c.normalized()
+	store := &Store{domain: c.Domain, cachePath: cachePath(c)}
+	if err := store.loadCertificate(); err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+
+// MatchesCached compares the complete chain and validates the supplied key,
+// without creating a renewal client, taking a writer lock or changing state.
+func MatchesCached(c Options, certPath, keyPath string) (bool, error) {
+	store, err := readCachedStore(c)
+	if err != nil {
+		return false, err
+	}
+	get, err := Manual(c.normalized().Domain, certPath, keyPath)
+	if err != nil {
+		return false, err
+	}
+	candidate, err := get(nil)
+	if err != nil {
+		return false, err
+	}
+	current := store.current.Load()
+	return current != nil && slices.EqualFunc(current.Certificate, candidate.Certificate, bytes.Equal), nil
 }
 
 // openRegularFile 拒绝可能阻塞停机的特殊文件。

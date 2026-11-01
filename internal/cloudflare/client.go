@@ -57,6 +57,7 @@ type Record struct {
 }
 
 type response struct {
+	bytes   int
 	Success *bool           `json:"success"`
 	Result  json.RawMessage `json:"result"`
 	Errors  []struct {
@@ -69,24 +70,24 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*r
 	var buf bytes.Buffer
 	if body != nil {
 		if err := json.NewEncoder(&buf).Encode(body); err != nil {
-			return nil, err
+			return nil, &NotSentError{Cause: errors.New("cannot encode cloudflare request")}
 		}
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, &buf)
 	if err != nil {
-		return nil, err
+		return nil, &NotSentError{Cause: errors.New("invalid cloudflare request URL")}
 	}
 	token := c.token
 	if c.tokenSource != nil {
 		token, err = c.tokenSource()
 		if err != nil {
-			return nil, err
+			return nil, &NotSentError{Cause: err}
 		}
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, &NotSentError{Cause: err}
 	}
 	return c.doRequest(req)
 }
@@ -110,12 +111,16 @@ func (c *Client) doRequest(req *http.Request) (out *response, result error) {
 	defer res.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
 	if err != nil {
-		return nil, fmt.Errorf("cloudflare response: %w", err)
+		cause := errors.New("cloudflare response read failed")
+		if req.Context().Err() != nil {
+			cause = req.Context().Err()
+		}
+		return nil, &Error{Status: res.StatusCode, Kind: "response", Cause: cause, RetryAfter: RetryAfter(res.Header.Get("Retry-After"))}
 	}
 	if len(data) > 1<<20 {
-		return nil, fmt.Errorf("cloudflare response exceeds 1 MiB")
+		return nil, &Error{Status: res.StatusCode, Kind: "response exceeds 1 MiB", Cause: ErrProtocol, RetryAfter: RetryAfter(res.Header.Get("Retry-After"))}
 	}
-	var decoded response
+	decoded := response{bytes: len(data)}
 	decodeErr := json.Unmarshal(data, &decoded)
 	if !utf8.Valid(data) {
 		decodeErr = ErrProtocol
@@ -147,7 +152,7 @@ func (c *Client) doRequest(req *http.Request) (out *response, result error) {
 		want = '['
 	}
 	if len(resultBytes) == 0 || resultBytes[0] != want {
-		return nil, &Error{Status: res.StatusCode, Kind: "protocol", Cause: ErrProtocol}
+		return nil, &Error{Status: res.StatusCode, Kind: "protocol", Cause: ErrProtocol, RetryAfter: RetryAfter(res.Header.Get("Retry-After"))}
 	}
 	return &decoded, nil
 }
@@ -223,7 +228,7 @@ func (c *Client) CheckZone(ctx context.Context, domain string) error {
 
 func (c *Client) ListRecords(ctx context.Context, name string) ([]Record, error) {
 	all := []Record{}
-	seen := map[string]Record{}
+	seen := map[string]int{}
 	pages := pageTracker{}
 	var total int
 	for page := 1; ; page++ {
@@ -232,7 +237,7 @@ func (c *Client) ListRecords(ctx context.Context, name string) ([]Record, error)
 		if err != nil {
 			return nil, err
 		}
-		total += len(res.Result)
+		total += res.bytes
 		if total > 16<<20 {
 			return nil, errors.New("cloudflare query exceeds 16 MiB")
 		}
@@ -244,18 +249,27 @@ func (c *Client) ListRecords(ctx context.Context, name string) ([]Record, error)
 		if err != nil {
 			return nil, err
 		}
+		if page == 1 && res.Info.TotalCount != nil {
+			// A remote count is only a bounded allocation hint, never a reason
+			// to trust an incomplete response or allocate arbitrary memory.
+			hint := min(*res.Info.TotalCount, 4096)
+			if hint > len(batch) {
+				all = make([]Record, 0, hint)
+				seen = make(map[string]int, hint)
+			}
+		}
 		fresh := 0
 		for _, r := range batch {
 			if r.ID == "" || r.Name != name || r.Type == "" {
 				return nil, ErrProtocol
 			}
-			if old, ok := seen[r.ID]; ok {
-				if old != r {
+			if index, ok := seen[r.ID]; ok {
+				if all[index] != r {
 					return nil, errors.New("cloudflare record changed during pagination")
 				}
 				continue
 			}
-			seen[r.ID] = r
+			seen[r.ID] = len(all)
 			fresh++
 			all = append(all, r)
 		}

@@ -9,7 +9,8 @@ import (
 	"time"
 )
 
-// Store publishes immutable certificate snapshots after durable disk writes.
+// Store publishes immutable certificate snapshots after complete file publication.
+// A post-publication sync failure retains the usable snapshot and is retried locally.
 // TLS handshakes only load an atomic pointer; no disk or network work is done.
 type Store struct {
 	domain    string

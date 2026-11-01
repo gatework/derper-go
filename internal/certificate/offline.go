@@ -85,17 +85,13 @@ func CertificateStatus(c *x509.Certificate, domain string) Status {
 }
 func CachedStatus(c Options) (Status, error) {
 	// This read is independent of the writer lock and observes an atomic bundle.
-	m, err := New(c, nil, nil)
+	m, err := readCachedStore(c)
 	if err != nil {
-		return Status{}, err
-	}
-	m.cachePath = cachePath(m.options)
-	if err = m.loadCertificate(); err != nil {
 		return Status{}, err
 	}
 	pair := m.current.Load()
 	if pair == nil {
 		return Status{}, errors.New("no cached certificate")
 	}
-	return CertificateStatus(pair.Leaf, m.options.Domain), nil
+	return CertificateStatus(pair.Leaf, m.domain), nil
 }
