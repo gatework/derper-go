@@ -1,0 +1,1681 @@
+{
+  "baseline": "b984078e8d2cd0fbd84dfdcc09137b53eeed62c4",
+  "candidate": "cf7f189fe0166888e07eb458e8ee4c3f45c35fe9",
+  "performance_workflow": "https://github.com/gatework/derper-go/actions/runs/41277044416",
+  "ci_workflow": "https://github.com/gatework/derper-go/actions/runs/41277040999",
+  "server_cpus": 2,
+  "server_memory_bytes": 2147483648,
+  "connections": 1000,
+  "seconds_per_version_per_trial": 600,
+  "median_paired_ratios": {
+    "throughput": 0.9758678500384731,
+    "p99": 1.0250953623770327
+  },
+  "trials": [
+    {
+      "trial": 1,
+      "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+      "baseline": {
+        "scenario": "forward",
+        "connections": 1000,
+        "seconds": 600.000050887,
+        "packets": 53234131,
+        "mbps": 851.746023762,
+        "p50_us": 5546,
+        "p95_us": 8299,
+        "p99_us": 9437,
+        "errors": 0,
+        "sampling_errors": 0,
+        "peak_rss_bytes": 52998144,
+        "peak_fds": 1055,
+        "peak_goroutines": 1079,
+        "cpu_percent": 183.47576927244754,
+        "allocated_bytes": 73650736,
+        "gc_cycles": 6,
+        "gc_pause_ns": 469053,
+        "before": {
+          "rss_bytes": 13131776,
+          "heap_bytes": 826296,
+          "goroutines": 15,
+          "fds": 15,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 0,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 0,
+            "checked": 0,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        },
+        "loaded": {
+          "rss_bytes": 48529408,
+          "heap_bytes": 16132488,
+          "goroutines": 1075,
+          "fds": 1055,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 0,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 0,
+            "checked": 0,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        },
+        "after": {
+          "rss_bytes": 53002240,
+          "heap_bytes": 21198240,
+          "goroutines": 15,
+          "fds": 15,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 1000,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 19,
+            "checked": 1000,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        }
+      },
+      "candidate": {
+        "scenario": "forward",
+        "connections": 1000,
+        "seconds": 599.999970413,
+        "packets": 51949470,
+        "mbps": 831.1915609874412,
+        "p50_us": 5703,
+        "p95_us": 8398,
+        "p99_us": 9277,
+        "errors": 0,
+        "sampling_errors": 0,
+        "peak_rss_bytes": 53719040,
+        "peak_fds": 1065,
+        "peak_goroutines": 1090,
+        "cpu_percent": 180.8026210823452,
+        "allocated_bytes": 73925744,
+        "gc_cycles": 7,
+        "gc_pause_ns": 1468701,
+        "before": {
+          "rss_bytes": 13316096,
+          "heap_bytes": 856616,
+          "goroutines": 15,
+          "fds": 15,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 0,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 0,
+            "checked": 0,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        },
+        "loaded": {
+          "rss_bytes": 48238592,
+          "heap_bytes": 22516456,
+          "goroutines": 1090,
+          "fds": 1065,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 0,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 0,
+            "checked": 0,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        },
+        "after": {
+          "rss_bytes": 53723136,
+          "heap_bytes": 17994096,
+          "goroutines": 15,
+          "fds": 15,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 1000,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 24,
+            "checked": 1000,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        }
+      }
+    },
+    {
+      "trial": 2,
+      "cpu_model": "AMD EPYC 7763 64-Core Processor",
+      "baseline": {
+        "scenario": "forward",
+        "connections": 1000,
+        "seconds": 600.000014606,
+        "packets": 47399565,
+        "mbps": 758.3930215381858,
+        "p50_us": 6283,
+        "p95_us": 9029,
+        "p99_us": 9962,
+        "errors": 0,
+        "sampling_errors": 0,
+        "peak_rss_bytes": 55017472,
+        "peak_fds": 1067,
+        "peak_goroutines": 1094,
+        "cpu_percent": 190.38572503204344,
+        "allocated_bytes": 73833368,
+        "gc_cycles": 6,
+        "gc_pause_ns": 680366,
+        "before": {
+          "rss_bytes": 13131776,
+          "heap_bytes": 866792,
+          "goroutines": 15,
+          "fds": 15,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 0,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 0,
+            "checked": 0,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        },
+        "loaded": {
+          "rss_bytes": 49647616,
+          "heap_bytes": 13309672,
+          "goroutines": 1093,
+          "fds": 1067,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 0,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 0,
+            "checked": 0,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        },
+        "after": {
+          "rss_bytes": 53723136,
+          "heap_bytes": 18832344,
+          "goroutines": 15,
+          "fds": 15,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 1000,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 25,
+            "checked": 1000,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        }
+      },
+      "candidate": {
+        "scenario": "forward",
+        "connections": 1000,
+        "seconds": 600.000019325,
+        "packets": 46503171,
+        "mbps": 744.0507120353667,
+        "p50_us": 6395,
+        "p95_us": 9260,
+        "p99_us": 10212,
+        "errors": 0,
+        "sampling_errors": 0,
+        "peak_rss_bytes": 52740096,
+        "peak_fds": 1065,
+        "peak_goroutines": 1091,
+        "cpu_percent": 188.91680591530456,
+        "allocated_bytes": 73665272,
+        "gc_cycles": 6,
+        "gc_pause_ns": 529479,
+        "before": {
+          "rss_bytes": 13152256,
+          "heap_bytes": 830904,
+          "goroutines": 15,
+          "fds": 15,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 0,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 0,
+            "checked": 0,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        },
+        "loaded": {
+          "rss_bytes": 47239168,
+          "heap_bytes": 18554448,
+          "goroutines": 1090,
+          "fds": 1065,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 0,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 0,
+            "checked": 0,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        },
+        "after": {
+          "rss_bytes": 52748288,
+          "heap_bytes": 23603536,
+          "goroutines": 15,
+          "fds": 15,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 1000,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 24,
+            "checked": 1000,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        }
+      }
+    },
+    {
+      "trial": 3,
+      "cpu_model": "AMD EPYC 9V45 96-Core Processor",
+      "baseline": {
+        "scenario": "forward",
+        "connections": 1000,
+        "seconds": 599.999971088,
+        "packets": 86555433,
+        "mbps": 1384.8869947330877,
+        "p50_us": 3439,
+        "p95_us": 4995,
+        "p99_us": 5743,
+        "errors": 0,
+        "sampling_errors": 0,
+        "peak_rss_bytes": 53809152,
+        "peak_fds": 1061,
+        "peak_goroutines": 1084,
+        "cpu_percent": 193.46651182250628,
+        "allocated_bytes": 73472168,
+        "gc_cycles": 6,
+        "gc_pause_ns": 378113,
+        "before": {
+          "rss_bytes": 13111296,
+          "heap_bytes": 828960,
+          "goroutines": 15,
+          "fds": 15,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 0,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 0,
+            "checked": 0,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        },
+        "loaded": {
+          "rss_bytes": 48054272,
+          "heap_bytes": 13167848,
+          "goroutines": 1084,
+          "fds": 1061,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 0,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 0,
+            "checked": 0,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        },
+        "after": {
+          "rss_bytes": 53342208,
+          "heap_bytes": 18562576,
+          "goroutines": 15,
+          "fds": 15,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 1000,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 21,
+            "checked": 1000,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        }
+      },
+      "candidate": {
+        "scenario": "forward",
+        "connections": 1000,
+        "seconds": 599.999988787,
+        "packets": 84149969,
+        "mbps": 1346.3995291619633,
+        "p50_us": 3528,
+        "p95_us": 5183,
+        "p99_us": 6041,
+        "errors": 0,
+        "sampling_errors": 0,
+        "peak_rss_bytes": 53383168,
+        "peak_fds": 1067,
+        "peak_goroutines": 1094,
+        "cpu_percent": 192.96366943950272,
+        "allocated_bytes": 73700312,
+        "gc_cycles": 7,
+        "gc_pause_ns": 620637,
+        "before": {
+          "rss_bytes": 13246464,
+          "heap_bytes": 864392,
+          "goroutines": 15,
+          "fds": 15,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 0,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 0,
+            "checked": 0,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        },
+        "loaded": {
+          "rss_bytes": 47132672,
+          "heap_bytes": 21511064,
+          "goroutines": 1093,
+          "fds": 1067,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 0,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 0,
+            "checked": 0,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        },
+        "after": {
+          "rss_bytes": 53383168,
+          "heap_bytes": 16985368,
+          "goroutines": 15,
+          "fds": 15,
+          "connections": {
+            "rate_rejected": 0,
+            "active": 0,
+            "limit": 2048,
+            "accepted": 1000,
+            "rejected": 0
+          },
+          "admission": {
+            "peak_running": 25,
+            "checked": 1000,
+            "fail_open": 0,
+            "requests": 0,
+            "running": 0,
+            "max_concurrent_checks": 32,
+            "max_requests": 128,
+            "rejected": 0,
+            "limited": 0,
+            "coalesced": 0
+          }
+        }
+      }
+    }
+  ],
+  "resilience": {
+    "passed": true,
+    "scenarios": [
+      "idle",
+      "slow",
+      "reconnect",
+      "admission",
+      "memory",
+      "profiles"
+    ]
+  },
+  "scenarios": {
+    "baseline-admission": {
+      "scenario": "admission",
+      "connections": 1000,
+      "seconds": 19.999917719,
+      "packets": 1707657,
+      "mbps": 819.6787321992882,
+      "p50_us": 5793,
+      "p95_us": 8393,
+      "p99_us": 9222,
+      "errors": 0,
+      "sampling_errors": 0,
+      "peak_rss_bytes": 65114112,
+      "peak_fds": 1052,
+      "peak_goroutines": 1070,
+      "cpu_percent": 177.33659957163746,
+      "allocated_bytes": 3698208,
+      "gc_cycles": 0,
+      "gc_pause_ns": 0,
+      "before": {
+        "rss_bytes": 13176832,
+        "heap_bytes": 860472,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "loaded": {
+        "rss_bytes": 65024000,
+        "heap_bytes": 21391360,
+        "goroutines": 1069,
+        "fds": 1052,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "after": {
+        "rss_bytes": 65138688,
+        "heap_bytes": 25939592,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 1512,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 32,
+          "checked": 1368,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 256,
+          "limited": 128,
+          "coalesced": 0
+        }
+      }
+    },
+    "baseline-idle": {
+      "scenario": "idle",
+      "connections": 1000,
+      "seconds": 20.000069015,
+      "packets": 0,
+      "mbps": 0,
+      "p50_us": 0,
+      "p95_us": 0,
+      "p99_us": 0,
+      "errors": 0,
+      "sampling_errors": 0,
+      "peak_rss_bytes": 49868800,
+      "peak_fds": 1057,
+      "peak_goroutines": 1078,
+      "cpu_percent": 0.32414888144324705,
+      "allocated_bytes": 2936496,
+      "gc_cycles": 0,
+      "gc_pause_ns": 0,
+      "before": {
+        "rss_bytes": 13299712,
+        "heap_bytes": 846344,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "loaded": {
+        "rss_bytes": 49496064,
+        "heap_bytes": 13889344,
+        "goroutines": 1078,
+        "fds": 1057,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "after": {
+        "rss_bytes": 49897472,
+        "heap_bytes": 17684560,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 1000,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 21,
+          "checked": 1000,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      }
+    },
+    "baseline-reconnect": {
+      "scenario": "reconnect",
+      "connections": 1000,
+      "seconds": 20.000013342,
+      "packets": 1417635,
+      "mbps": 680.4643460622348,
+      "p50_us": 6976,
+      "p95_us": 10093,
+      "p99_us": 11235,
+      "errors": 0,
+      "sampling_errors": 0,
+      "peak_rss_bytes": 55644160,
+      "peak_fds": 1081,
+      "peak_goroutines": 1115,
+      "cpu_percent": 142.67119482404593,
+      "allocated_bytes": 3782248,
+      "gc_cycles": 0,
+      "gc_pause_ns": 0,
+      "before": {
+        "rss_bytes": 13381632,
+        "heap_bytes": 860208,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "loaded": {
+        "rss_bytes": 55578624,
+        "heap_bytes": 19346152,
+        "goroutines": 1114,
+        "fds": 1081,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "after": {
+        "rss_bytes": 55668736,
+        "heap_bytes": 24199184,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 2021,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 32,
+          "checked": 2000,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 21,
+          "limited": 21,
+          "coalesced": 0
+        }
+      }
+    },
+    "baseline-slow": {
+      "scenario": "slow",
+      "connections": 1000,
+      "seconds": 19.999889913,
+      "packets": 6400,
+      "mbps": 3.0720169094562753,
+      "p50_us": 9739000,
+      "p95_us": 18596000,
+      "p99_us": 19384000,
+      "errors": 0,
+      "sampling_errors": 0,
+      "peak_rss_bytes": 49827840,
+      "peak_fds": 1073,
+      "peak_goroutines": 1134,
+      "cpu_percent": 16.933513207983424,
+      "allocated_bytes": 5376752,
+      "gc_cycles": 0,
+      "gc_pause_ns": 0,
+      "before": {
+        "rss_bytes": 13127680,
+        "heap_bytes": 869328,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "loaded": {
+        "rss_bytes": 49532928,
+        "heap_bytes": 16997192,
+        "goroutines": 1102,
+        "fds": 1073,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "after": {
+        "rss_bytes": 49885184,
+        "heap_bytes": 23369976,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 1000,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 28,
+          "checked": 1000,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      }
+    },
+    "candidate-admission": {
+      "scenario": "admission",
+      "connections": 1000,
+      "seconds": 19.994880569,
+      "packets": 1734989,
+      "mbps": 833.0079463351858,
+      "p50_us": 5690,
+      "p95_us": 8291,
+      "p99_us": 9289,
+      "errors": 0,
+      "sampling_errors": 0,
+      "peak_rss_bytes": 71073792,
+      "peak_fds": 1104,
+      "peak_goroutines": 1108,
+      "cpu_percent": 178.40043043469908,
+      "allocated_bytes": 3535176,
+      "gc_cycles": 0,
+      "gc_pause_ns": 0,
+      "before": {
+        "rss_bytes": 13238272,
+        "heap_bytes": 857072,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "loaded": {
+        "rss_bytes": 70983680,
+        "heap_bytes": 25552512,
+        "goroutines": 1108,
+        "fds": 1104,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "after": {
+        "rss_bytes": 71086080,
+        "heap_bytes": 29960536,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 1512,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 32,
+          "checked": 1384,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 256,
+          "limited": 128,
+          "coalesced": 0
+        }
+      }
+    },
+    "candidate-idle": {
+      "scenario": "idle",
+      "connections": 1000,
+      "seconds": 20.000420576,
+      "packets": 0,
+      "mbps": 0,
+      "p50_us": 0,
+      "p95_us": 0,
+      "p99_us": 0,
+      "errors": 0,
+      "sampling_errors": 0,
+      "peak_rss_bytes": 49262592,
+      "peak_fds": 1069,
+      "peak_goroutines": 1096,
+      "cpu_percent": 0.3398828526714682,
+      "allocated_bytes": 2960776,
+      "gc_cycles": 0,
+      "gc_pause_ns": 0,
+      "before": {
+        "rss_bytes": 13352960,
+        "heap_bytes": 864224,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "loaded": {
+        "rss_bytes": 49205248,
+        "heap_bytes": 16284184,
+        "goroutines": 1096,
+        "fds": 1069,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "after": {
+        "rss_bytes": 49287168,
+        "heap_bytes": 20141392,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 1000,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 26,
+          "checked": 1000,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      }
+    },
+    "candidate-memory-256MiB": {
+      "scenario": "forward",
+      "connections": 1000,
+      "seconds": 29.999972789,
+      "packets": 2569356,
+      "mbps": 822.1946657579683,
+      "p50_us": 5766,
+      "p95_us": 8450,
+      "p99_us": 9380,
+      "errors": 0,
+      "sampling_errors": 0,
+      "peak_rss_bytes": 49209344,
+      "peak_fds": 1061,
+      "peak_goroutines": 1085,
+      "cpu_percent": 176.7858603506682,
+      "allocated_bytes": 5244080,
+      "gc_cycles": 0,
+      "gc_pause_ns": 0,
+      "before": {
+        "rss_bytes": 13291520,
+        "heap_bytes": 866480,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "loaded": {
+        "rss_bytes": 49037312,
+        "heap_bytes": 15629368,
+        "goroutines": 1084,
+        "fds": 1061,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "after": {
+        "rss_bytes": 49274880,
+        "heap_bytes": 21578520,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 1000,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 23,
+          "checked": 1000,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      }
+    },
+    "candidate-memory-96MiB": {
+      "scenario": "forward",
+      "connections": 1000,
+      "seconds": 29.999517243,
+      "packets": 2548025,
+      "mbps": 815.3811210314615,
+      "p50_us": 5816,
+      "p95_us": 8496,
+      "p99_us": 9483,
+      "errors": 0,
+      "sampling_errors": 0,
+      "peak_rss_bytes": 49115136,
+      "peak_fds": 1055,
+      "peak_goroutines": 1077,
+      "cpu_percent": 180.5302984088423,
+      "allocated_bytes": 5231992,
+      "gc_cycles": 0,
+      "gc_pause_ns": 0,
+      "before": {
+        "rss_bytes": 13217792,
+        "heap_bytes": 871056,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "loaded": {
+        "rss_bytes": 48181248,
+        "heap_bytes": 17480952,
+        "goroutines": 1075,
+        "fds": 1055,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "after": {
+        "rss_bytes": 49463296,
+        "heap_bytes": 23390864,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 1000,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 19,
+          "checked": 1000,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      }
+    },
+    "candidate-profiles": {
+      "scenario": "forward",
+      "connections": 1000,
+      "seconds": 29.999428554,
+      "packets": 2408857,
+      "mbps": 770.8489232844604,
+      "p50_us": 6155,
+      "p95_us": 8978,
+      "p99_us": 9904,
+      "errors": 0,
+      "sampling_errors": 0,
+      "peak_rss_bytes": 50470912,
+      "peak_fds": 1070,
+      "peak_goroutines": 1100,
+      "cpu_percent": 172.87695966156969,
+      "allocated_bytes": 8213040,
+      "gc_cycles": 1,
+      "gc_pause_ns": 155352,
+      "before": {
+        "rss_bytes": 13213696,
+        "heap_bytes": 848064,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "loaded": {
+        "rss_bytes": 48398336,
+        "heap_bytes": 19980456,
+        "goroutines": 1096,
+        "fds": 1069,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "after": {
+        "rss_bytes": 50618368,
+        "heap_bytes": 18160792,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 1000,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 27,
+          "checked": 1000,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      }
+    },
+    "candidate-reconnect": {
+      "scenario": "reconnect",
+      "connections": 1000,
+      "seconds": 19.996390638,
+      "packets": 1466246,
+      "mbps": 703.9251160282319,
+      "p50_us": 6758,
+      "p95_us": 9778,
+      "p99_us": 10693,
+      "errors": 0,
+      "sampling_errors": 0,
+      "peak_rss_bytes": 57024512,
+      "peak_fds": 1081,
+      "peak_goroutines": 1116,
+      "cpu_percent": 138.97846117882983,
+      "allocated_bytes": 3644944,
+      "gc_cycles": 1,
+      "gc_pause_ns": 175753,
+      "before": {
+        "rss_bytes": 13234176,
+        "heap_bytes": 871888,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "loaded": {
+        "rss_bytes": 56012800,
+        "heap_bytes": 26601336,
+        "goroutines": 1114,
+        "fds": 1081,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "after": {
+        "rss_bytes": 57090048,
+        "heap_bytes": 15024560,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 2018,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 32,
+          "checked": 2000,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 18,
+          "limited": 18,
+          "coalesced": 0
+        }
+      }
+    },
+    "candidate-slow": {
+      "scenario": "slow",
+      "connections": 1000,
+      "seconds": 20.000461413,
+      "packets": 6368,
+      "mbps": 3.0565694829552577,
+      "p50_us": 9767000,
+      "p95_us": 18629000,
+      "p99_us": 19330000,
+      "errors": 0,
+      "sampling_errors": 0,
+      "peak_rss_bytes": 50114560,
+      "peak_fds": 1059,
+      "peak_goroutines": 1113,
+      "cpu_percent": 17.06094139299245,
+      "allocated_bytes": 5365832,
+      "gc_cycles": 1,
+      "gc_pause_ns": 107681,
+      "before": {
+        "rss_bytes": 13357056,
+        "heap_bytes": 862608,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "loaded": {
+        "rss_bytes": 48574464,
+        "heap_bytes": 18609576,
+        "goroutines": 1081,
+        "fds": 1059,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 0,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 0,
+          "checked": 0,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      },
+      "after": {
+        "rss_bytes": 50503680,
+        "heap_bytes": 14505936,
+        "goroutines": 15,
+        "fds": 15,
+        "connections": {
+          "rate_rejected": 0,
+          "active": 0,
+          "limit": 2048,
+          "accepted": 1000,
+          "rejected": 0
+        },
+        "admission": {
+          "peak_running": 21,
+          "checked": 1000,
+          "fail_open": 0,
+          "requests": 0,
+          "running": 0,
+          "max_concurrent_checks": 32,
+          "max_requests": 128,
+          "rejected": 0,
+          "limited": 0,
+          "coalesced": 0
+        }
+      }
+    }
+  },
+  "control_plane": {
+    "baseline": {
+      "BenchmarkListRecords/2-2": {
+        "samples": 5,
+        "median_ns_op": 6111.0,
+        "median_bytes_op": 5819.0,
+        "median_allocs_op": 52.0
+      },
+      "BenchmarkListRecords/1000-2": {
+        "samples": 5,
+        "median_ns_op": 1168095.0,
+        "median_bytes_op": 1454550.0,
+        "median_allocs_op": 1694.0
+      },
+      "BenchmarkConnectionQuota-2": {
+        "samples": 5,
+        "median_ns_op": 62.75,
+        "median_bytes_op": 0.0,
+        "median_allocs_op": 0.0
+      }
+    },
+    "candidate": {
+      "BenchmarkListRecords/2-2": {
+        "samples": 5,
+        "median_ns_op": 6353.0,
+        "median_bytes_op": 5979.0,
+        "median_allocs_op": 56.0
+      },
+      "BenchmarkListRecords/1000-2": {
+        "samples": 5,
+        "median_ns_op": 1152982.0,
+        "median_bytes_op": 1348457.0,
+        "median_allocs_op": 1717.0
+      },
+      "BenchmarkConnectionQuota-2": {
+        "samples": 5,
+        "median_ns_op": 62.83,
+        "median_bytes_op": 0.0,
+        "median_allocs_op": 0.0
+      }
+    }
+  }
+}

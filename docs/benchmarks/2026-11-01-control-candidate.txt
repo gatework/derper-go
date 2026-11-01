@@ -1,0 +1,75 @@
+goos: linux
+goarch: amd64
+pkg: github.com/gatework/derper-go/internal/cloudflare
+cpu: AMD EPYC 9V74 80-Core Processor
+BenchmarkListRecords/2-2 	   92773	      6244 ns/op	    5979 B/op	      56 allocs/op
+BenchmarkListRecords/1000-2         	     518	   1149527 ns/op	 1348722 B/op	    1718 allocs/op
+PASS
+ok  	github.com/gatework/derper-go/internal/cloudflare	1.181s
+goos: linux
+goarch: amd64
+pkg: github.com/gatework/derper-go/internal/relay
+cpu: AMD EPYC 9V74 80-Core Processor
+BenchmarkConnectionQuota-2   	 9532968	        63.01 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/gatework/derper-go/internal/relay	0.671s
+goos: linux
+goarch: amd64
+pkg: github.com/gatework/derper-go/internal/cloudflare
+cpu: AMD EPYC 9V74 80-Core Processor
+BenchmarkListRecords/2-2 	   91540	      6287 ns/op	    5979 B/op	      56 allocs/op
+BenchmarkListRecords/1000-2         	     528	   1145432 ns/op	 1348457 B/op	    1717 allocs/op
+PASS
+ok  	github.com/gatework/derper-go/internal/cloudflare	1.186s
+goos: linux
+goarch: amd64
+pkg: github.com/gatework/derper-go/internal/relay
+cpu: AMD EPYC 9V74 80-Core Processor
+BenchmarkConnectionQuota-2   	 9657102	        62.64 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/gatework/derper-go/internal/relay	0.674s
+goos: linux
+goarch: amd64
+pkg: github.com/gatework/derper-go/internal/cloudflare
+cpu: AMD EPYC 9V74 80-Core Processor
+BenchmarkListRecords/2-2 	   91575	      6353 ns/op	    5979 B/op	      56 allocs/op
+BenchmarkListRecords/1000-2         	     517	   1194251 ns/op	 1348203 B/op	    1717 allocs/op
+PASS
+ok  	github.com/gatework/derper-go/internal/cloudflare	1.205s
+goos: linux
+goarch: amd64
+pkg: github.com/gatework/derper-go/internal/relay
+cpu: AMD EPYC 9V74 80-Core Processor
+BenchmarkConnectionQuota-2   	 9627439	        62.83 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/gatework/derper-go/internal/relay	0.674s
+goos: linux
+goarch: amd64
+pkg: github.com/gatework/derper-go/internal/cloudflare
+cpu: AMD EPYC 9V74 80-Core Processor
+BenchmarkListRecords/2-2 	   91405	      6446 ns/op	    5979 B/op	      56 allocs/op
+BenchmarkListRecords/1000-2         	     512	   1160433 ns/op	 1348622 B/op	    1718 allocs/op
+PASS
+ok  	github.com/gatework/derper-go/internal/cloudflare	1.189s
+goos: linux
+goarch: amd64
+pkg: github.com/gatework/derper-go/internal/relay
+cpu: AMD EPYC 9V74 80-Core Processor
+BenchmarkConnectionQuota-2   	 9629736	        62.77 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/gatework/derper-go/internal/relay	0.674s
+goos: linux
+goarch: amd64
+pkg: github.com/gatework/derper-go/internal/cloudflare
+cpu: AMD EPYC 9V74 80-Core Processor
+BenchmarkListRecords/2-2 	   91911	      6363 ns/op	    5979 B/op	      56 allocs/op
+BenchmarkListRecords/1000-2         	     523	   1152982 ns/op	 1348452 B/op	    1717 allocs/op
+PASS
+ok  	github.com/gatework/derper-go/internal/cloudflare	1.194s
+goos: linux
+goarch: amd64
+pkg: github.com/gatework/derper-go/internal/relay
+cpu: AMD EPYC 9V74 80-Core Processor
+BenchmarkConnectionQuota-2   	11415982	        62.90 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/gatework/derper-go/internal/relay	0.777s
