@@ -5,16 +5,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"net/url"
-	"os"
-	"path/filepath"
-	"strings"
 
-	"github.com/gatework/derper-go/internal/cloudflare"
 	"github.com/gatework/derper-go/internal/config"
 	"github.com/gatework/derper-go/internal/setup"
-	"github.com/gatework/derper-go/internal/state"
-	"github.com/gatework/derper-go/internal/systemd"
 )
 
 func initialize(ctx context.Context, args []string, ui terminal) int {
@@ -63,10 +56,8 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 		fmt.Fprintln(ui.err, "出现多余的位置参数")
 		return 2
 	}
-	seen := map[string]bool{}
 	emptyPath := ""
 	fs.Visit(func(f *flag.Flag) {
-		seen[f.Name] = true
 		switch f.Name {
 		case "c", "config", "state-dir", "token-file", "identity", "import-certificate", "import-key", "certificate", "key", "socket":
 			if f.Value.String() == "" {
@@ -78,263 +69,56 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 		fmt.Fprintln(ui.err, "--"+emptyPath+" 不能为空")
 		return 2
 	}
-	applyInput := func(c config.Config) (config.Config, error) {
-		var err error
-		for name := range seen {
-			switch name {
-			case "domain":
-				c.Domain = input.Domain
-			case "email":
-				c.Email = input.Email
-			case "listen":
-				c.Relay.Listen = input.Relay.Listen
-			case "http-port":
-				c.HTTP.Port = &httpPort
-			case "admission-url":
-				c.Admission.URL = input.Admission.URL
-			case "region":
-				c.Region = input.Region
-			case "admission":
-				c.Admission.Mode = config.AdmissionMode(access)
-			case "ipv4":
-				c.DNS.IPv4 = input.DNS.IPv4
-			case "ipv6":
-				c.DNS.IPv6 = input.DNS.IPv6
-			case "socket":
-				c.Tailscale.Socket = input.Tailscale.Socket
-			case "ca":
-				c.Certificate.CA = input.Certificate.CA
-			case "certificate":
-				c.Certificate.File, err = filepath.Abs(input.Certificate.File)
-				if err != nil {
-					return c, err
-				}
-			case "key":
-				c.Certificate.Key, err = filepath.Abs(input.Certificate.Key)
-				if err != nil {
-					return c, err
-				}
-			case "no-dns":
-				value := !noDNS
-				c.DNS.Publish = &value
-			case "no-stun":
-				value := !noSTUN
-				c.STUN.Enabled = &value
-			}
-		}
-		c.Domain = strings.ToLower(strings.TrimSuffix(c.Domain, "."))
-		return c, nil
-	}
 
-	if noService && !seen["c"] && !seen["config"] {
-		path = "config.json"
-	}
-	var err error
-	path, err = filepath.Abs(path)
-	if err != nil {
-		return failure(ui, err)
-	}
-	if dir == "" {
-		dir = setup.DataDir(path)
-	}
-	dir, err = filepath.Abs(dir)
-	if err != nil {
-		return failure(ui, err)
-	}
-	c, err := config.Load(path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return failure(ui, err)
-	}
-	journal, journalErr := state.ReadDeployment(dir)
-	if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
-		return failure(ui, journalErr)
-	}
-	if journalErr == nil {
-		if errors.Is(err, os.ErrNotExist) {
-			c, err = config.Decode(journal.Config)
-			if err != nil {
-				return failure(ui, err)
-			}
-		}
-		if journal.Phase == "ready" || journal.Phase == "prepared" {
-			candidate, e := applyInput(c)
-			if e != nil {
-				return failure(ui, e)
-			}
-			old, e := c.Resolve(filepath.Dir(path))
-			if e != nil {
-				return failure(ui, e)
-			}
-			next, e := candidate.Resolve(filepath.Dir(path))
-			if e != nil {
-				return failure(ui, e)
-			}
-			next, e = checkExistingInputs(old, next, dir, existingInputs{tokenFile: tokenFile, identity: identityPath, importCertificate: importCert, importKey: importKey, manualCertificate: seen["certificate"], manualKey: seen["key"]})
-			if e != nil {
-				return failure(ui, e)
-			}
-			if changed := config.ChangedFields(old, next); len(changed) > 0 {
-				return failure(ui, fmt.Errorf("已有部署设置不同：%s；请修改配置后使用 reload 或 restart", strings.Join(changed, ", ")))
-			}
-			if dryRun {
-				fmt.Fprintf(ui.out, "只读预览：部署阶段 %s；配置、身份和证书保留，未启动恢复操作。\n", journal.Phase)
-				return 0
-			}
-		}
-		if journal.Phase == "prepared" && !noService && !noStart {
-			fmt.Fprintln(ui.out, "继续启动已批准的服务，保留现有身份、证书和 DNS 归属。")
-			if e := setup.New().ResumePrepared(ctx, path, dir); e != nil {
-				return failure(ui, e)
-			}
-		}
-		if journal.Phase == "ready" || journal.Phase == "prepared" {
-			fmt.Fprintln(ui.out, "此部署已初始化，保留现有配置、身份与证书。")
-			return result(ui, showStatus(ui, dir, false))
-		}
-		if s, e := state.InUse(dir); e != nil {
-			return failure(ui, e)
-		} else if s {
-			return result(ui, showStatus(ui, dir, false))
-		}
-		fmt.Fprintln(ui.out, "检测到未完成的初始化，将继续完成安装。")
-	}
-	c, err = applyInput(c)
-	if err != nil {
-		return failure(ui, err)
-	}
-
-	if !noService {
-		if err = systemd.Check(); err != nil {
-			return failure(ui, err)
-		}
-	}
-	prompt := func(label string, value *string) error {
-		if *value != "" {
-			return nil
-		}
-		if !ui.interactive {
-			return fmt.Errorf("缺少%s；非交互模式请通过命令选项提供", label)
-		}
-		fmt.Fprint(ui.out, label+"：")
-		line, e := readLine(ctx, ui.in)
-		if e != nil {
-			return e
-		}
-		if line == "" {
-			return fmt.Errorf("%s不能为空", label)
-		}
-		*value = line
-		return nil
-	}
-	if err = prompt("中继域名（--domain）", &c.Domain); err != nil {
-		return failure(ui, err)
-	}
-	c.Domain = strings.ToLower(strings.TrimSuffix(c.Domain, "."))
-	if c.Certificate.File == "" {
-		if err = prompt("证书联系邮箱（--email）", &c.Email); err != nil {
-			return failure(ui, err)
-		}
-	}
-	s, err := setup.Resolve(c, path)
-	if err != nil {
-		return failure(ui, err)
-	}
-	if !dryRun && !ui.interactive && (!yes || (s.AutomaticCertificate() && !accept)) {
-		return failure(ui, errors.New("非交互初始化需要 --yes；自动签发还需要单独提供 --accept-terms"))
-	}
-	token := ""
-	if s.NeedsCloudflare() {
-		source := tokenFile
-		if source == "" && c.Cloudflare.TokenFile != "" {
-			source = s.TokenFile
-		}
-		if source == "" {
-			if _, e := os.Stat(s.TokenFile); e == nil {
-				source = s.TokenFile
-			}
-		}
-		if source != "" || os.Getenv("CLOUDFLARE_API_TOKEN") != "" {
-			token, err = (cloudflare.Credentials{File: source}).Read()
-		} else if ui.interactive && ui.secret != nil {
-			fmt.Fprintln(ui.out, "Cloudflare Token 需要对应区域的 Zone:Read 与 DNS:Edit 权限。")
-			fmt.Fprint(ui.out, "Cloudflare API Token（隐藏输入）：")
-			token, err = ui.secret()
-		} else {
-			err = errors.New("缺少 Cloudflare 凭据，请指定 --token-file 或 CLOUDFLARE_API_TOKEN")
-		}
-		if err != nil {
-			return failure(ui, err)
-		}
-	}
-	workflow := setup.New()
-	plan, err := workflow.Prepare(ctx, setup.Request{Config: c, Path: path, StateDir: dir, Token: token, Service: !noService, Start: !noStart && !noService, IdentityPath: identityPath, ImportCertificate: importCert, ImportKey: importKey})
-	if err != nil {
-		return failure(ui, err)
-	}
-	fmt.Fprintf(ui.out, "\n安装摘要\n域名：%s\nHTTPS：%s\n准入模式：%s\n中继区域：%d\n配置：%s\n状态：%s\n", plan.Settings.Domain, plan.Settings.HTTPSAddress(), plan.Settings.Access, plan.Settings.Region, path, dir)
-	if plan.Settings.RelayEnabled && plan.Settings.UsesController() {
-		endpoint, _ := url.Parse(plan.Settings.AdmissionURL)
-		endpoint.RawQuery = "" // Query parameters may contain an operator-provided secret.
-		policy := "拒绝接入"
-		if plan.Settings.AdmissionFailOpen {
-			policy = "允许接入"
-		}
-		fmt.Fprintf(ui.out, "准入控制器：%s\n控制器故障时：%s\n", endpoint.String(), policy)
-	}
-	if plan.Settings.MeshKeyFile != "" {
-		fmt.Fprintf(ui.out, "节点互联：已设置密钥，%d 个出站节点\n", len(plan.Settings.MeshPeers))
-	}
-	if plan.ExistingListener {
-		fmt.Fprintln(ui.out, "迁移：已核对原中继身份；安装后先停止旧服务，再启动 derper-go，不自动交接端口。")
-	}
-	if plan.AlternatePort {
-		fmt.Fprintln(ui.out, "443 不可用，本次将保存并使用 :8443。")
-	}
-	if plan.Service {
-		if plan.Start {
-			fmt.Fprintln(ui.out, "操作：安装并启动 derper-go.service")
-		} else {
-			fmt.Fprintln(ui.out, "操作：安装 derper-go.service，暂不启动")
-		}
-	} else {
-		fmt.Fprintln(ui.out, "操作：准备前台运行配置")
-	}
-	describeDNS(ui.out, plan.Changes)
-	if plan.Settings.AutomaticCertificate() {
-		fmt.Fprintln(ui.out, "证书机构：", plan.Settings.CA)
-		fmt.Fprintln(ui.out, "服务条款：", plan.TermsURL)
-	}
-	if dryRun {
-		fmt.Fprintln(ui.out, "只读预览完成，未保存配置、安装服务、签发证书或修改 DNS。")
-		return 0
-	}
-	if !yes {
-		question := "确认上述安装及 DNS 接管？[y/N] "
-		if plan.Settings.AutomaticCertificate() {
-			question = "确认上述安装、DNS 接管，并接受所列证书机构服务条款？[y/N] "
-		}
-		if err = confirm(ctx, ui, question); err != nil {
-			return failure(ui, err)
-		}
-		accept = true
-	} else if plan.Settings.AutomaticCertificate() && !accept {
-		return failure(ui, errors.New("--yes 不代表接受证书机构条款；请提供 --accept-terms"))
-	}
-	if err = workflow.Apply(ctx, plan, accept); err != nil {
-		return failure(ui, fmt.Errorf("初始化未完成：%w；已保存的身份与证书会在重试时保留", err))
-	}
+	request := setup.Request{StateDir: dir, Preview: dryRun, Interactive: ui.interactive,
+		Sources: setup.Sources{TokenFile: tokenFile, Identity: identityPath, ImportCertificate: importCert, ImportKey: importKey},
+		Consent: setup.Consent{Install: yes, Terms: accept}}
 	if noService {
-		fmt.Fprintf(ui.out, "配置已准备。运行：derper-go run --config %q --state-dir %q\n", path, dir)
+		request.Mode = setup.PrepareForeground
 	} else if noStart {
-		if identityPath != "" {
-			fmt.Fprintln(ui.out, "迁移已准备，未启用新服务的开机启动。停止并禁用原服务后：sudo systemctl enable --now derper-go.service")
-		} else {
-			fmt.Fprintln(ui.out, "服务已安装。启动：sudo derper-go service start")
-		}
-	} else if !plan.Settings.RelayEnabled {
-		fmt.Fprintln(ui.out, "HTTPS 服务已就绪，DERP 已关闭；使用 status 检查引导 DNS 缓存。")
-	} else {
-		fmt.Fprintln(ui.out, "中继已就绪。下一步：derper-go tailnet config，将输出片段合并到 Tailnet 策略。")
+		request.Mode = setup.PrepareService
 	}
-	return 0
+	admission := config.AdmissionMode(access)
+	publishDNS, stunEnabled := !noDNS, !noSTUN
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "config", "c":
+			request.ConfigPath = path
+		case "domain":
+			request.Overrides.Domain = &input.Domain
+		case "email":
+			request.Overrides.Email = &input.Email
+		case "listen":
+			request.Overrides.Listen = &input.Relay.Listen
+		case "http-port":
+			request.Overrides.HTTPPort = &httpPort
+		case "admission-url":
+			request.Overrides.AdmissionURL = &input.Admission.URL
+		case "region":
+			request.Overrides.Region = &input.Region
+		case "admission":
+			request.Overrides.Admission = &admission
+		case "ipv4":
+			request.Overrides.IPv4 = &input.DNS.IPv4
+		case "ipv6":
+			request.Overrides.IPv6 = &input.DNS.IPv6
+		case "socket":
+			request.Overrides.Socket = &input.Tailscale.Socket
+		case "ca":
+			request.Overrides.CA = &input.Certificate.CA
+		case "certificate":
+			request.Overrides.CertificateFile = &input.Certificate.File
+		case "key":
+			request.Overrides.CertificateKey = &input.Certificate.Key
+		case "no-dns":
+			request.Overrides.PublishDNS = &publishDNS
+		case "no-stun":
+			request.Overrides.STUNEnabled = &stunEnabled
+		}
+	})
+	result, err := setup.New().Initialize(ctx, request, initTerminal{ui})
+	if err != nil {
+		return failure(ui, err)
+	}
+	return renderInitialization(ui, result)
 }

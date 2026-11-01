@@ -1,4 +1,4 @@
-// Package setup turns a read-only deployment plan into resumable installation work.
+// Package setup owns relay initialization, from read-only inspection to recovery.
 package setup
 
 import (
@@ -28,14 +28,14 @@ import (
 	"github.com/gatework/derper-go/internal/tailnet"
 )
 
-type Request struct {
+type preparation struct {
 	Config                                     config.Config
 	Path, StateDir                             string
 	Token                                      string
 	Service, Start                             bool
 	IdentityPath, ImportCertificate, ImportKey string
 }
-type Plan struct {
+type plan struct {
 	Config                       config.Config
 	Settings                     config.Settings
 	Path, StateDir, TermsURL     string
@@ -49,8 +49,13 @@ type Plan struct {
 	ExistingListener             bool
 }
 
-// Workflow's dependencies are private; tests replace only host/network boundaries.
+type deploymentPaths struct{ config, state string }
+
+// Workflow owns initialization; dependencies and the executable plan stay private.
+// Tests replace host/network boundaries and use a temporary deployment layout.
 type Workflow struct {
+	paths                deploymentPaths
+	refresh              func(context.Context, config.Settings) error
 	checkHost            func() error
 	checkTailnet         func(context.Context, string, int) (int, error)
 	portAvailable        func(context.Context, string, int) bool
@@ -68,7 +73,24 @@ type Workflow struct {
 }
 
 func New() *Workflow {
-	return &Workflow{stage: systemd.Stage, checkMigrationRegion: inspectMigrationRegion, checkRelayIdentity: inspectRelayIdentity, checkHost: systemd.Check, checkTailnet: inspectTailnet, portAvailable: portAvailable, stunAvailable: stunAvailable, discoverIPv4: dns.DiscoverIPv4, dnsPlan: inspectDNS, terms: discoverTerms, install: systemd.Install, start: func(ctx context.Context) error { return systemd.Control(ctx, "start") }, ownState: systemd.OwnStateFile, wait: WaitReady}
+	return &Workflow{
+		paths:                deploymentPaths{config: config.DefaultPath, state: config.DefaultDataDir},
+		checkHost:            systemd.Check,
+		checkTailnet:         inspectTailnet,
+		portAvailable:        portAvailable,
+		stunAvailable:        stunAvailable,
+		discoverIPv4:         dns.DiscoverIPv4,
+		dnsPlan:              inspectDNS,
+		terms:                discoverTerms,
+		install:              systemd.Install,
+		stage:                systemd.Stage,
+		refresh:              systemd.Refresh,
+		start:                func(ctx context.Context) error { return systemd.Control(ctx, "start") },
+		wait:                 WaitReady,
+		ownState:             systemd.OwnStateFile,
+		checkMigrationRegion: inspectMigrationRegion,
+		checkRelayIdentity:   inspectRelayIdentity,
+	}
 }
 func inspectTailnet(ctx context.Context, socket string, region int) (int, error) {
 	v := tailnet.New(tailnet.Options{Socket: socket})
@@ -136,14 +158,14 @@ func DataDir(path string) string {
 	}
 	return filepath.Join(filepath.Dir(path), "state")
 }
-func (w *Workflow) Prepare(ctx context.Context, r Request) (Plan, error) {
-	p := Plan{Config: r.Config, Path: r.Path, StateDir: r.StateDir, Service: r.Service, Start: r.Start, token: r.Token}
+func (w *Workflow) prepare(ctx context.Context, r preparation) (plan, error) {
+	p := plan{Config: r.Config, Path: r.Path, StateDir: r.StateDir, Service: r.Service, Start: r.Start, token: r.Token}
 	var err error
 	if err = ctx.Err(); err != nil {
 		return p, err
 	}
 	if r.Service {
-		if r.Path != config.DefaultPath || r.StateDir != config.DefaultDataDir {
+		if r.Path != w.paths.config || r.StateDir != w.paths.state {
 			return p, errors.New("系统服务使用标准配置和状态目录；其他位置请选择 --no-service")
 		}
 		if err = w.checkHost(); err != nil {
@@ -206,7 +228,7 @@ func (w *Workflow) Prepare(ctx context.Context, r Request) (Plan, error) {
 		return p, fmt.Errorf("HTTP 探测端口 %d 不可用", p.Settings.HTTPPort)
 	}
 	if p.Service {
-		// Validate the credential path that Apply will manage, before any writes.
+		// Validate the credential path that apply will manage, before any writes.
 		serviceSettings := p.Settings
 		serviceSettings.TokenFile = filepath.Join(filepath.Dir(p.Path), "cloudflare.token")
 		if _, err = systemd.Render(systemd.Binary, p.Path, serviceSettings); err != nil {
@@ -279,9 +301,9 @@ func safeDirectory(path string) error {
 	return os.MkdirAll(path, 0700)
 }
 
-// Apply is called only after one explicit summary confirmation. Terms acceptance
+// apply is called only after one explicit summary confirmation. Terms acceptance
 // is a separate fact in automation, never implied by --yes.
-func (w *Workflow) Apply(ctx context.Context, p Plan, acceptedTerms bool) error {
+func (w *Workflow) apply(ctx context.Context, p plan, acceptedTerms bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -431,7 +453,7 @@ func (w *Workflow) Apply(ctx context.Context, p Plan, acceptedTerms bool) error 
 	return w.finish(ctx, p, journal)
 }
 
-func (w *Workflow) finish(ctx context.Context, p Plan, journal state.Deployment) error {
+func (w *Workflow) finish(ctx context.Context, p plan, journal state.Deployment) error {
 	if !p.Service || !p.Start {
 		return nil
 	}
@@ -451,10 +473,10 @@ func (w *Workflow) finish(ctx context.Context, p Plan, journal state.Deployment)
 	return nil
 }
 
-// ResumePrepared finishes an already approved installation without repeating
+// resumePrepared finishes an already approved installation without repeating
 // discovery, credentials, identity creation or DNS adoption.
-func (w *Workflow) ResumePrepared(ctx context.Context, path, dir string) error {
-	if path != config.DefaultPath || dir != config.DefaultDataDir {
+func (w *Workflow) resumePrepared(ctx context.Context, path, dir string) error {
+	if path != w.paths.config || dir != w.paths.state {
 		return errors.New("恢复系统服务需要标准配置和状态目录")
 	}
 	installation, err := state.AcquireInstallation(filepath.Dir(path))
@@ -491,10 +513,10 @@ func (w *Workflow) ResumePrepared(ctx context.Context, path, dir string) error {
 	if err = daemon.Check(settings); err != nil {
 		return err
 	}
-	if err = systemd.Refresh(ctx, settings); err != nil {
+	if err = w.refresh(ctx, settings); err != nil {
 		return err
 	}
-	return w.finish(ctx, Plan{Path: path, StateDir: dir, Settings: settings, Service: true, Start: true}, journal)
+	return w.finish(ctx, plan{Path: path, StateDir: dir, Settings: settings, Service: true, Start: true}, journal)
 }
 
 func WaitReady(ctx context.Context, dir string, s config.Settings) error {
