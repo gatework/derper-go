@@ -133,9 +133,11 @@ func execute(ctx context.Context, args []string, ui terminal) (code int) {
 	fs.StringVar(&path, "config", path, "配置文件")
 	fs.StringVar(&path, "c", path, "配置文件")
 	fs.StringVar(&dir, "state-dir", "", "状态目录（默认与部署位置对应）")
-	jsonOutput, yes, force, effective := false, false, false, false
+	jsonOutput, yes, force, effective, dryRun := false, false, false, false, false
 	format, certPath, keyPath, binary := "policy", "", "", systemd.Binary
 	switch name {
+	case "config/reload", "service/reload":
+		fs.BoolVar(&dryRun, "dry-run", false, "只读预览变化字段和重启要求")
 	case "config/show":
 		fs.BoolVar(&effective, "effective", false, "显示已生效的默认值和绝对路径")
 	case "status", "doctor":
@@ -162,6 +164,19 @@ func execute(ctx context.Context, args []string, ui terminal) (code int) {
 		fmt.Fprintln(ui.err, "出现多余的位置参数")
 		return 2
 	}
+	emptyPath := ""
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "c", "config", "state-dir", "file", "key", "binary":
+			if f.Value.String() == "" {
+				emptyPath = f.Name
+			}
+		}
+	})
+	if emptyPath != "" {
+		fmt.Fprintln(ui.err, "--"+emptyPath+" 不能为空")
+		return 2
+	}
 	var err error
 	path, err = filepath.Abs(path)
 	if err != nil {
@@ -175,6 +190,16 @@ func execute(ctx context.Context, args []string, ui terminal) (code int) {
 		return failure(ui, err)
 	}
 	if name == "config/reload" || name == "service/reload" {
+		if dryRun {
+			plan, err := daemon.PreviewReload(ctx, dir)
+			if len(plan.Changes) > 0 {
+				fmt.Fprintln(ui.out, "变化字段：", strings.Join(plan.Changes, ", "))
+			}
+			if err == nil {
+				fmt.Fprintln(ui.out, "预览通过，可热重载；手动证书会重新读取并验证。")
+			}
+			return result(ui, err)
+		}
 		err := daemon.Reload(ctx, dir)
 		if err == nil {
 			fmt.Fprintln(ui.out, "配置已重载，现有中继连接保持运行。")

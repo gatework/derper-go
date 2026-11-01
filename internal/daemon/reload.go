@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -28,24 +29,42 @@ func (c *liveCertificate) set(get relay.CertificateSource) {
 	c.current.Store(&certificateSnapshot{get})
 }
 
-func reloadConfiguration(path string, current *config.Settings, server *relay.Server, controller *admission.Controller, cert *liveCertificate) error {
+type ReloadPlan struct {
+	Changes         []string `json:"changes"`
+	RequiresRestart bool     `json:"requires_restart"`
+	Error           string   `json:"error,omitempty"`
+}
+
+func reloadConfiguration(ctx context.Context, path string, current *config.Settings, server *relay.Server, controller *admission.Controller, cert *liveCertificate, preview bool) (ReloadPlan, error) {
+	plan := ReloadPlan{Changes: []string{}}
+	if err := ctx.Err(); err != nil {
+		return plan, err
+	}
 	c, err := config.Load(path)
 	if err != nil {
-		return err
+		return plan, err
 	}
 	next, err := c.Resolve(filepath.Dir(path))
 	if err != nil {
-		return err
+		return plan, err
 	}
+	plan.Changes = config.ChangedFields(*current, next)
 	if err = config.CheckReload(*current, next); err != nil {
-		return err
+		plan.RequiresRestart = true
+		return plan, err
 	}
 	var get relay.CertificateSource
 	if !next.AutomaticCertificate() {
 		get, err = certificate.Manual(next.Domain, next.CertificateFile, next.CertificateKey)
 		if err != nil {
-			return err
+			return plan, err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return plan, err
+	}
+	if preview {
+		return plan, nil
 	}
 	// All fallible preparation is complete. In-flight checks and TLS handshakes
 	// keep their original snapshots; established relay connections stay open.
@@ -57,7 +76,7 @@ func reloadConfiguration(path string, current *config.Settings, server *relay.Se
 		cert.set(get)
 	}
 	*current = next
-	return nil
+	return plan, nil
 }
 
 func controlPath(dir string) string {
@@ -66,7 +85,7 @@ func controlPath(dir string) string {
 
 // startReloadControl is local-only: the private directory and 0600 Unix socket
 // permit only the service account and root. No control endpoint is exposed on TLS.
-func startReloadControl(dir string, reload func() error, logger *slog.Logger, signals <-chan os.Signal) (func(), error) {
+func startReloadControl(dir string, reload func(context.Context, bool) (ReloadPlan, error), logger *slog.Logger, signals <-chan os.Signal) (func(), error) {
 	path := controlPath(dir)
 	if info, err := os.Lstat(path); err == nil {
 		if info.Mode()&os.ModeSocket == 0 {
@@ -86,23 +105,59 @@ func startReloadControl(dir string, reload func() error, logger *slog.Logger, si
 		listener.Close()
 		return nil, err
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	var mu sync.Mutex
-	apply := func() error {
+	var jobs sync.WaitGroup
+	closing := false
+	slot := make(chan struct{}, 1)
+	busy := errors.New("另一配置重载正在执行，请稍后重试")
+	apply := func(request context.Context, preview bool) (ReloadPlan, error) {
 		mu.Lock()
-		defer mu.Unlock()
-		if err := reload(); err != nil {
-			logger.Warn("配置重载失败，保留原运行配置", "error", err)
-			return err
+		if closing || request.Err() != nil {
+			mu.Unlock()
+			return ReloadPlan{}, context.Canceled
 		}
-		logger.Info("配置已重载，现有中继连接保持运行")
-		return nil
+		select {
+		case slot <- struct{}{}:
+		default:
+			mu.Unlock()
+			return ReloadPlan{}, busy
+		}
+		jobs.Add(1)
+		mu.Unlock()
+		defer jobs.Done()
+		defer func() { <-slot }()
+		plan, err := reload(request, preview)
+		if err != nil {
+			logger.Warn("配置重载失败，保留原运行配置", "error", err)
+			return plan, err
+		}
+		if !preview {
+			logger.Info("配置已重载，现有中继连接保持运行")
+		}
+		return plan, nil
 	}
-	server := &http.Server{ReadHeaderTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: 5 * time.Second, MaxHeaderBytes: 4096, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/reload" {
+	server := &http.Server{BaseContext: func(net.Listener) context.Context { return ctx }, ReadHeaderTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: 5 * time.Second, MaxHeaderBytes: 4096, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/reload" && r.URL.Path != "/reload/plan" {
 			http.NotFound(w, r)
 			return
 		}
-		if err := apply(); err != nil {
+		preview := r.URL.Path == "/reload/plan"
+		plan, err := apply(r.Context(), preview)
+		if errors.Is(err, busy) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		if preview {
+			w.Header().Set("Content-Type", "application/json")
+			if err != nil {
+				plan.Error = err.Error()
+				w.WriteHeader(http.StatusBadRequest)
+			}
+			_ = json.NewEncoder(w).Encode(plan)
+			return
+		}
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -116,44 +171,86 @@ func startReloadControl(dir string, reload func() error, logger *slog.Logger, si
 			select {
 			case <-stop:
 				return
-			case <-signals:
-				_ = apply()
+			case _, ok := <-signals:
+				if !ok {
+					signals = nil
+					continue
+				}
+				_, _ = apply(ctx, false)
 			}
 		}
 	})
+	var once sync.Once
 	return func() {
-		close(stop)
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if server.Shutdown(ctx) != nil {
-			_ = server.Close()
-		}
-		_ = listener.Close()
-		workers.Wait()
+		once.Do(func() {
+			mu.Lock()
+			closing = true
+			mu.Unlock()
+			cancel()
+			close(stop)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if server.Shutdown(ctx) != nil {
+				_ = server.Close()
+			}
+			_ = listener.Close()
+			workers.Wait()
+			jobs.Wait()
+		})
 	}, nil
 }
 
 // Reload waits for acknowledgement from the running daemon, including rejection
 // reasons. A failed reload never reports success just because a signal was sent.
 func Reload(ctx context.Context, dir string) error {
+	_, err := reloadRequest(ctx, dir, false)
+	return err
+}
+
+func PreviewReload(ctx context.Context, dir string) (ReloadPlan, error) {
+	return reloadRequest(ctx, dir, true)
+}
+
+func reloadRequest(ctx context.Context, dir string, preview bool) (ReloadPlan, error) {
+	var plan ReloadPlan
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", controlPath(dir))
 	}}
 	defer transport.CloseIdleConnections()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost/reload", nil)
+	endpoint := "http://localhost/reload"
+	if preview {
+		endpoint += "/plan"
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
 	if err != nil {
-		return err
+		return plan, err
 	}
 	response, err := (&http.Client{Transport: transport}).Do(request)
 	if err != nil {
-		return errors.New("无法连接运行中的中继；请确认服务支持 reload 且当前用户有权限")
+		if ctx.Err() != nil {
+			return plan, ctx.Err()
+		}
+		return plan, errors.New("无法连接运行中的中继；请确认服务支持 reload 且当前用户有权限")
 	}
 	defer response.Body.Close()
+	if preview && (response.StatusCode == http.StatusOK || response.StatusCode == http.StatusBadRequest) {
+		body, err := io.ReadAll(io.LimitReader(response.Body, 16<<10+1))
+		if err != nil || len(body) > 16<<10 || json.Unmarshal(body, &plan) != nil {
+			return plan, errors.New("配置预览响应无效")
+		}
+		if response.StatusCode != http.StatusOK {
+			return plan, errors.New(plan.Error)
+		}
+		return plan, nil
+	}
 	if response.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return errors.New(string(body))
+		return plan, errors.New(string(body))
 	}
-	return nil
+	if preview {
+		return plan, errors.New("当前服务不支持只读预览，请先升级")
+	}
+	return plan, nil
 }

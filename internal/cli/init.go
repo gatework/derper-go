@@ -24,7 +24,7 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 	var input config.Config
 	var identityPath, importCert, importKey string
 	httpPort := -1
-	yes, accept, noService, noStart, noDNS, noSTUN := false, false, false, false, false, false
+	yes, accept, noService, noStart, noDNS, noSTUN, dryRun := false, false, false, false, false, false, false
 	fs.StringVar(&path, "config", path, "配置文件")
 	fs.StringVar(&path, "c", path, "配置文件")
 	fs.StringVar(&dir, "state-dir", "", "状态目录（仅前台部署可覆盖）")
@@ -48,6 +48,7 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 	fs.StringVar(&input.Certificate.Key, "key", "", "已有私钥 PEM 文件")
 	fs.BoolVar(&noDNS, "no-dns", false, "关闭地址记录发布")
 	fs.BoolVar(&noSTUN, "no-stun", false, "关闭 STUN")
+	fs.BoolVar(&dryRun, "dry-run", false, "只读预检并展示安装摘要，不执行安装或发布")
 	fs.BoolVar(&yes, "yes", false, "批准显示的安装摘要及 DNS 接管")
 	fs.BoolVar(&accept, "accept-terms", false, "明确接受所选证书机构的服务条款")
 	fs.BoolVar(&noService, "no-service", false, "只准备前台配置，默认写入当前目录 config.json")
@@ -63,7 +64,68 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 		return 2
 	}
 	seen := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { seen[f.Name] = true })
+	emptyPath := ""
+	fs.Visit(func(f *flag.Flag) {
+		seen[f.Name] = true
+		switch f.Name {
+		case "c", "config", "state-dir", "token-file", "identity", "import-certificate", "import-key", "certificate", "key", "socket":
+			if f.Value.String() == "" {
+				emptyPath = f.Name
+			}
+		}
+	})
+	if emptyPath != "" {
+		fmt.Fprintln(ui.err, "--"+emptyPath+" 不能为空")
+		return 2
+	}
+	applyInput := func(c config.Config) (config.Config, error) {
+		var err error
+		for name := range seen {
+			switch name {
+			case "domain":
+				c.Domain = input.Domain
+			case "email":
+				c.Email = input.Email
+			case "listen":
+				c.Relay.Listen = input.Relay.Listen
+			case "http-port":
+				c.HTTP.Port = &httpPort
+			case "admission-url":
+				c.Admission.URL = input.Admission.URL
+			case "region":
+				c.Region = input.Region
+			case "admission":
+				c.Admission.Mode = config.AdmissionMode(access)
+			case "ipv4":
+				c.DNS.IPv4 = input.DNS.IPv4
+			case "ipv6":
+				c.DNS.IPv6 = input.DNS.IPv6
+			case "socket":
+				c.Tailscale.Socket = input.Tailscale.Socket
+			case "ca":
+				c.Certificate.CA = input.Certificate.CA
+			case "certificate":
+				c.Certificate.File, err = filepath.Abs(input.Certificate.File)
+				if err != nil {
+					return c, err
+				}
+			case "key":
+				c.Certificate.Key, err = filepath.Abs(input.Certificate.Key)
+				if err != nil {
+					return c, err
+				}
+			case "no-dns":
+				value := !noDNS
+				c.DNS.Publish = &value
+			case "no-stun":
+				value := !noSTUN
+				c.STUN.Enabled = &value
+			}
+		}
+		c.Domain = strings.ToLower(strings.TrimSuffix(c.Domain, "."))
+		return c, nil
+	}
+
 	if noService && !seen["c"] && !seen["config"] {
 		path = "config.json"
 	}
@@ -94,6 +156,27 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 				return failure(ui, err)
 			}
 		}
+		if journal.Phase == "ready" || journal.Phase == "prepared" {
+			candidate, e := applyInput(c)
+			if e != nil {
+				return failure(ui, e)
+			}
+			old, e := c.Resolve(filepath.Dir(path))
+			if e != nil {
+				return failure(ui, e)
+			}
+			next, e := candidate.Resolve(filepath.Dir(path))
+			if e != nil {
+				return failure(ui, e)
+			}
+			if changed := config.ChangedFields(old, next); len(changed) > 0 {
+				return failure(ui, fmt.Errorf("已有部署设置不同：%s；请修改配置后使用 reload 或 restart", strings.Join(changed, ", ")))
+			}
+			if dryRun {
+				fmt.Fprintf(ui.out, "只读预览：部署阶段 %s；配置、身份和证书保留，未启动恢复操作。\n", journal.Phase)
+				return 0
+			}
+		}
 		if journal.Phase == "prepared" && !noService && !noStart {
 			fmt.Fprintln(ui.out, "继续启动已批准的服务，保留现有身份、证书和 DNS 归属。")
 			if e := setup.New().ResumePrepared(ctx, path, dir); e != nil {
@@ -111,48 +194,11 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 		}
 		fmt.Fprintln(ui.out, "检测到未完成的初始化，将继续完成安装。")
 	}
-	for name := range seen {
-		switch name {
-		case "domain":
-			c.Domain = input.Domain
-		case "email":
-			c.Email = input.Email
-		case "listen":
-			c.Relay.Listen = input.Relay.Listen
-		case "http-port":
-			c.HTTP.Port = &httpPort
-		case "admission-url":
-			c.Admission.URL = input.Admission.URL
-		case "region":
-			c.Region = input.Region
-		case "admission":
-			c.Admission.Mode = config.AdmissionMode(access)
-		case "ipv4":
-			c.DNS.IPv4 = input.DNS.IPv4
-		case "ipv6":
-			c.DNS.IPv6 = input.DNS.IPv6
-		case "socket":
-			c.Tailscale.Socket = input.Tailscale.Socket
-		case "ca":
-			c.Certificate.CA = input.Certificate.CA
-		case "certificate":
-			c.Certificate.File, err = filepath.Abs(input.Certificate.File)
-			if err != nil {
-				return failure(ui, err)
-			}
-		case "key":
-			c.Certificate.Key, err = filepath.Abs(input.Certificate.Key)
-			if err != nil {
-				return failure(ui, err)
-			}
-		case "no-dns":
-			value := !noDNS
-			c.DNS.Publish = &value
-		case "no-stun":
-			value := !noSTUN
-			c.STUN.Enabled = &value
-		}
+	c, err = applyInput(c)
+	if err != nil {
+		return failure(ui, err)
 	}
+
 	if !noService {
 		if err = systemd.Check(); err != nil {
 			return failure(ui, err)
@@ -189,7 +235,7 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 	if err != nil {
 		return failure(ui, err)
 	}
-	if !ui.interactive && (!yes || (s.AutomaticCertificate() && !accept)) {
+	if !dryRun && !ui.interactive && (!yes || (s.AutomaticCertificate() && !accept)) {
 		return failure(ui, errors.New("非交互初始化需要 --yes；自动签发还需要单独提供 --accept-terms"))
 	}
 	token := ""
@@ -253,6 +299,10 @@ func initialize(ctx context.Context, args []string, ui terminal) int {
 	if plan.Settings.AutomaticCertificate() {
 		fmt.Fprintln(ui.out, "证书机构：", plan.Settings.CA)
 		fmt.Fprintln(ui.out, "服务条款：", plan.TermsURL)
+	}
+	if dryRun {
+		fmt.Fprintln(ui.out, "只读预览完成，未保存配置、安装服务、签发证书或修改 DNS。")
+		return 0
 	}
 	if !yes {
 		question := "确认上述安装及 DNS 接管？[y/N] "

@@ -81,7 +81,9 @@ func TestReloadKeepsLiveRelayAndRejectsPartialConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stop, err := startReloadControl(dir, func() error { return reloadConfiguration(path, &current, server, nil, live) }, logger, nil)
+	stop, err := startReloadControl(dir, func(ctx context.Context, preview bool) (ReloadPlan, error) {
+		return reloadConfiguration(ctx, path, &current, server, nil, live, preview)
+	}, logger, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +135,13 @@ func TestReloadKeepsLiveRelayAndRejectsPartialConfiguration(t *testing.T) {
 	c.Relay.MaxConnections = 1
 	c.Relay.Homepage = "https://example.com"
 	save()
+	plan, err := PreviewReload(ctx, dir)
+	if err != nil || len(plan.Changes) == 0 || plan.RequiresRestart || current.MaxConnections != 4 || server.Connections().Limit != 4 {
+		t.Fatal("preview applied configuration", plan, err)
+	}
+	if pair, err := get(nil); err != nil || pair.Leaf.SerialNumber.Int64() != 1 {
+		t.Fatal("preview replaced live certificate", err)
+	}
 	if err = Reload(ctx, dir); err != nil {
 		t.Fatal(err)
 	}
@@ -163,6 +172,9 @@ func TestReloadKeepsLiveRelayAndRejectsPartialConfiguration(t *testing.T) {
 	c.Relay.Listen = "127.0.0.1:1"
 	c.Relay.MaxConnections = 9
 	save()
+	if plan, err := PreviewReload(ctx, dir); err == nil || !plan.RequiresRestart || server.Connections().Limit != 4 {
+		t.Fatal("restart requirement lost", plan, err)
+	}
 	if err = Reload(ctx, dir); err == nil || server.Connections().Limit != 4 {
 		t.Fatal("structural reload partially applied", err)
 	}

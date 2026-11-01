@@ -172,7 +172,9 @@ func run(parent context.Context, s config.Settings, dir, path string, signals <-
 	}
 	if path != "" {
 		current := s
-		closeControl, e := startReloadControl(dir, func() error { return reloadConfiguration(path, &current, server, controller, live) }, logger, signals)
+		closeControl, e := startReloadControl(dir, func(ctx context.Context, preview bool) (ReloadPlan, error) {
+			return reloadConfiguration(ctx, path, &current, server, controller, live, preview)
+		}, logger, signals)
 		if e != nil {
 			cancel()
 			<-done
