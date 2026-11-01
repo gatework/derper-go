@@ -53,6 +53,12 @@ type Publisher struct {
 	discover func(context.Context) (string, error)
 }
 
+func (c *Publisher) Close() {
+	if closer, ok := c.api.(interface{ Close() }); ok {
+		closer.Close()
+	}
+}
+
 func New(options Options, api API) *Publisher {
 	options.Approved = append([]cloudflare.Record(nil), options.Approved...)
 	return &Publisher{options: options, api: api, discover: DiscoverIPv4}
@@ -168,7 +174,7 @@ func (c *Publisher) plan(ctx context.Context, j journal) ([]Change, error) {
 		before := current
 		change := Change{Before: &before, After: want}
 		previous, owned := j.Records[want.Type]
-		if p, ok := j.Pending[want.Type]; ok && same(current, p.Record) && (!owned || current.ID == previous.ID) {
+		if p, ok := j.Pending[want.Type]; ok && same(current, p.Record) && (!owned || current.ID == previous.ID) && (p.Record.ID == "" || p.Record.ID == current.ID) {
 			change.Action = "recover"
 			change.After = current
 		} else if owned {
@@ -251,9 +257,16 @@ func (c *Publisher) Apply(ctx context.Context, approved ...cloudflare.Record) ([
 			}
 			continue
 		}
+		if ch.Before != nil {
+			desired.ID = ch.Before.ID
+		}
 		j.Pending[desired.Type] = pending{Record: desired, Since: time.Now().UTC()}
 		if err = c.save(j); err != nil {
 			return changes, err
+		}
+		if err := ctx.Err(); err != nil {
+			delete(j.Pending, desired.Type)
+			return changes, errors.Join(err, c.save(j))
 		}
 		switch ch.Action {
 		case "create":
@@ -263,6 +276,14 @@ func (c *Publisher) Apply(ctx context.Context, approved ...cloudflare.Record) ([
 			err = c.api.UpdateRecord(ctx, desired.ID, cloudflare.RecordUpdate{Content: desired.Content, TTL: desired.TTL, Proxied: false, Comment: desired.Comment})
 		}
 		if err != nil {
+			var api *cloudflare.Error
+			if errors.As(err, &api) && api.Rejected {
+				delete(j.Pending, desired.Type)
+				return changes, errors.Join(err, c.save(j))
+			}
+			if !errors.Is(err, cloudflare.ErrUncertainWrite) {
+				err = &cloudflare.UncertainError{Cause: err}
+			}
 			return changes, err
 		}
 		j.Records[desired.Type] = desired

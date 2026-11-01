@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gatework/derper-go/internal/retry"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,6 +14,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
+
+	"github.com/gatework/derper-go/internal/retry"
 )
 
 type Client struct {
@@ -22,6 +24,7 @@ type Client struct {
 	baseURL, token, zoneID string
 	http                   *http.Client
 	tokenSource            func() (string, error)
+	ownsHTTP               bool
 }
 
 // Error exposes status and retry timing without including upstream response bodies.
@@ -31,6 +34,7 @@ type Error struct {
 	Cause      error
 	Codes      []int
 	RetryAfter time.Duration
+	Rejected   bool
 }
 
 func (e *Error) Error() string {
@@ -58,9 +62,7 @@ type response struct {
 	Errors  []struct {
 		Code int `json:"code"`
 	} `json:"errors"`
-	Info struct {
-		TotalPages int `json:"total_pages"`
-	} `json:"result_info"`
+	Info pageInfo `json:"result_info"`
 }
 
 func (c *Client) request(ctx context.Context, method, path string, body any) (*response, error) {
@@ -83,9 +85,27 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*r
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return c.doRequest(req)
+}
+
+func (c *Client) doRequest(req *http.Request) (out *response, result error) {
+	defer func() {
+		if req.Method != http.MethodGet && result != nil {
+			var api *Error
+			if !errors.As(result, &api) || !api.Rejected {
+				result = &UncertainError{Cause: result}
+			}
+		}
+	}()
 	res, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("cloudflare request: %w", err)
+		if req.Context().Err() != nil {
+			return nil, req.Context().Err()
+		}
+		return nil, &Error{Kind: "network"}
 	}
 	defer res.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
@@ -95,13 +115,16 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*r
 	if len(data) > 1<<20 {
 		return nil, fmt.Errorf("cloudflare response exceeds 1 MiB")
 	}
-	var out response
-	decodeErr := json.Unmarshal(data, &out)
-	protocolError := decodeErr != nil || out.Success == nil
-	if !protocolError && *out.Success && (len(out.Result) == 0 || bytes.Equal(out.Result, []byte("null"))) {
+	var decoded response
+	decodeErr := json.Unmarshal(data, &decoded)
+	if !utf8.Valid(data) {
+		decodeErr = ErrProtocol
+	}
+	protocolError := decodeErr != nil || decoded.Success == nil
+	if !protocolError && *decoded.Success && (len(decoded.Result) == 0 || bytes.Equal(decoded.Result, []byte("null"))) {
 		protocolError = true
 	}
-	if protocolError || res.StatusCode < 200 || res.StatusCode >= 300 || !*out.Success {
+	if protocolError || res.StatusCode < 200 || res.StatusCode >= 300 || !*decoded.Success {
 		apiErr := &Error{Status: res.StatusCode, Kind: "api", RetryAfter: RetryAfter(res.Header.Get("Retry-After"))}
 		if protocolError {
 			apiErr.Kind, apiErr.Cause = "protocol", ErrProtocol
@@ -110,14 +133,23 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*r
 			apiErr.Kind = "http"
 		}
 		if decodeErr == nil {
-			for _, e := range out.Errors {
+			for _, e := range decoded.Errors {
 				apiErr.Codes = append(apiErr.Codes, e.Code)
 			}
 		}
+		apiErr.Rejected = decodeErr == nil && decoded.Success != nil && !*decoded.Success && len(decoded.Errors) > 0 && res.StatusCode >= 400 && res.StatusCode < 500 && res.StatusCode != 408
 		// Neither decoding errors nor upstream bodies may echo a credential.
 		return nil, apiErr
 	}
-	return &out, nil
+	resultBytes := bytes.TrimSpace(decoded.Result)
+	want := byte('{')
+	if req.Method == http.MethodGet && (req.URL.Path == "/client/v4/zones" || strings.HasSuffix(req.URL.Path, "/zones") || strings.HasSuffix(req.URL.Path, "/dns_records")) {
+		want = '['
+	}
+	if len(resultBytes) == 0 || resultBytes[0] != want {
+		return nil, &Error{Status: res.StatusCode, Kind: "protocol", Cause: ErrProtocol}
+	}
+	return &decoded, nil
 }
 
 func (c *Client) path() string {
@@ -128,8 +160,9 @@ func (c *Client) path() string {
 
 func (c *Client) CheckZone(ctx context.Context, domain string) error {
 	c.zoneMu.Lock()
-	defer c.zoneMu.Unlock()
-	if c.zoneID == "" {
+	zoneID := c.zoneID
+	c.zoneMu.Unlock()
+	if zoneID == "" {
 		name := domain
 		for strings.Contains(name, ".") {
 			query := url.Values{"name": {name}, "status": {"active"}, "per_page": {"50"}}
@@ -145,7 +178,7 @@ func (c *Client) CheckZone(ctx context.Context, domain string) error {
 			if err = json.Unmarshal(res.Result, &zones); err != nil {
 				return fmt.Errorf("decode cloudflare zones: %w", err)
 			}
-			if len(zones) > 1 || res.Info.TotalPages > 1 {
+			if len(zones) > 1 || res.Info.TotalPages != nil && *res.Info.TotalPages > 1 {
 				return fmt.Errorf("ambiguous cloudflare zone; configure zone_id explicitly")
 			}
 			if len(zones) == 1 {
@@ -153,7 +186,13 @@ func (c *Client) CheckZone(ctx context.Context, domain string) error {
 				if z.ID == "" || z.Name != name || z.Status != "active" {
 					return fmt.Errorf("cloudflare returned an unexpected zone")
 				}
+				c.zoneMu.Lock()
+				if c.zoneID != "" && c.zoneID != z.ID {
+					c.zoneMu.Unlock()
+					return fmt.Errorf("cloudflare zone changed during discovery")
+				}
 				c.zoneID = z.ID
+				c.zoneMu.Unlock()
 				return nil
 			}
 			_, name, _ = strings.Cut(name, ".")
@@ -161,7 +200,7 @@ func (c *Client) CheckZone(ctx context.Context, domain string) error {
 		return fmt.Errorf("no active cloudflare zone found for ACME domain")
 	}
 
-	res, err := c.request(ctx, http.MethodGet, "/zones/"+url.PathEscape(c.zoneID), nil)
+	res, err := c.request(ctx, http.MethodGet, "/zones/"+url.PathEscape(zoneID), nil)
 	if err != nil {
 		return err
 	}
@@ -183,23 +222,53 @@ func (c *Client) CheckZone(ctx context.Context, domain string) error {
 }
 
 func (c *Client) ListRecords(ctx context.Context, name string) ([]Record, error) {
-	var all []Record
-	for page := 1; page <= 100; page++ {
+	all := []Record{}
+	seen := map[string]Record{}
+	pages := pageTracker{}
+	var total int
+	for page := 1; ; page++ {
 		q := url.Values{"name": {name}, "page": {strconv.Itoa(page)}, "per_page": {"100"}}
 		res, err := c.request(ctx, http.MethodGet, c.path()+"?"+q.Encode(), nil)
 		if err != nil {
 			return nil, err
 		}
-		var batch []Record
-		if err = json.Unmarshal(res.Result, &batch); err != nil {
-			return nil, fmt.Errorf("decode cloudflare records: %w", err)
+		total += len(res.Result)
+		if total > 16<<20 {
+			return nil, errors.New("cloudflare query exceeds 16 MiB")
 		}
-		all = append(all, batch...)
-		if page >= res.Info.TotalPages {
+		var batch []Record
+		if json.Unmarshal(res.Result, &batch) != nil {
+			return nil, ErrProtocol
+		}
+		last, err := pages.observe(res.Info, page, len(batch))
+		if err != nil {
+			return nil, err
+		}
+		fresh := 0
+		for _, r := range batch {
+			if r.ID == "" || r.Name != name || r.Type == "" {
+				return nil, ErrProtocol
+			}
+			if old, ok := seen[r.ID]; ok {
+				if old != r {
+					return nil, errors.New("cloudflare record changed during pagination")
+				}
+				continue
+			}
+			seen[r.ID] = r
+			fresh++
+			all = append(all, r)
+		}
+		if last {
+			if err := pages.complete(len(seen)); err != nil {
+				return nil, err
+			}
 			return all, nil
 		}
+		if fresh == 0 {
+			return nil, errors.New("cloudflare pagination did not advance")
+		}
 	}
-	return nil, fmt.Errorf("cloudflare Record pagination exceeds 100 pages")
 }
 
 func (c *Client) CreateRecord(ctx context.Context, r Record) (string, error) {
@@ -209,27 +278,37 @@ func (c *Client) CreateRecord(ctx context.Context, r Record) (string, error) {
 	}
 	var created Record
 	if err = json.Unmarshal(res.Result, &created); err != nil {
-		return "", fmt.Errorf("decode created cloudflare Record: %w", err)
+		return "", &UncertainError{Cause: ErrProtocol}
 	}
-	if created.ID == "" {
-		return "", fmt.Errorf("cloudflare created Record has no ID")
+	if created.ID == "" || !sameRecord(created, r) {
+		return "", &UncertainError{Cause: ErrProtocol}
 	}
 	return created.ID, nil
 }
 
 func (c *Client) DeleteRecord(ctx context.Context, id string) error {
-	_, err := c.request(ctx, http.MethodDelete, c.path()+"/"+url.PathEscape(id), nil)
-	return err
+	res, err := c.request(ctx, http.MethodDelete, c.path()+"/"+url.PathEscape(id), nil)
+	if err != nil {
+		return err
+	}
+	var result struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal(res.Result, &result) != nil || result.ID != id {
+		return &UncertainError{Cause: ErrProtocol}
+	}
+	return nil
 }
 
 const BaseURL = "https://api.cloudflare.com/client/v4"
 
 // New constructs a client without network I/O. The HTTP client must have bounded timeouts.
 func New(token, zoneID string, httpClient *http.Client) *Client {
-	if httpClient == nil {
+	owned := httpClient == nil
+	if owned {
 		httpClient = HTTPClient()
 	}
-	return &Client{baseURL: BaseURL, token: token, zoneID: zoneID, http: httpClient}
+	return &Client{baseURL: BaseURL, token: token, zoneID: zoneID, http: httpClient, ownsHTTP: owned}
 }
 
 // NewSource rereads credentials at request time, enabling token rotation.
@@ -241,8 +320,15 @@ func NewSource(source func() (string, error), zoneID string, httpClient *http.Cl
 
 // UpdateRecord updates explicitly supplied fields, preserving unrelated record metadata.
 func (c *Client) UpdateRecord(ctx context.Context, id string, fields RecordUpdate) error {
-	_, err := c.request(ctx, http.MethodPatch, c.path()+"/"+url.PathEscape(id), fields)
-	return err
+	res, err := c.request(ctx, http.MethodPatch, c.path()+"/"+url.PathEscape(id), fields)
+	if err != nil {
+		return err
+	}
+	var result Record
+	if json.Unmarshal(res.Result, &result) != nil || result.ID != id || result.Content != fields.Content || result.TTL != fields.TTL || result.Proxied != fields.Proxied || result.Comment != fields.Comment {
+		return &UncertainError{Cause: ErrProtocol}
+	}
+	return nil
 }
 
 // RecordUpdate changes only address ownership fields, preserving unrelated metadata.

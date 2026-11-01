@@ -18,6 +18,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/gatework/derper-go/internal/certificate"
+	"github.com/gatework/derper-go/internal/cloudflare"
 	"github.com/gatework/derper-go/internal/config"
 	"github.com/gatework/derper-go/internal/daemon"
 	"github.com/gatework/derper-go/internal/setup"
@@ -68,7 +69,7 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 }
 func execute(ctx context.Context, args []string, ui terminal) (code int) {
 	defer func() {
-		if code != 0 && errors.Is(ctx.Err(), context.Canceled) {
+		if code != 0 && code != 5 && errors.Is(ctx.Err(), context.Canceled) {
 			code = 130
 		}
 	}()
@@ -275,6 +276,7 @@ func execute(ctx context.Context, args []string, ui terminal) (code int) {
 		request, cancel := context.WithTimeout(ctx, time.Minute)
 		defer cancel()
 		publisher := daemon.NewDNSPublisher(s, dir, nil)
+		defer publisher.Close()
 		changes, e := publisher.Plan(request)
 		cancel()
 		err = e
@@ -340,6 +342,9 @@ func execute(ctx context.Context, args []string, ui terminal) (code int) {
 			_, err = io.WriteString(ui.out, unit)
 		}
 	}
+	if errors.Is(err, cloudflare.ErrUncertainWrite) {
+		return failure(ui, err)
+	}
 	if err != nil && errors.Is(err, context.Canceled) && ctx.Err() != nil {
 		return 130
 	}
@@ -404,7 +409,13 @@ func logLevel(s string) slog.Level {
 	_ = level.UnmarshalText([]byte(s))
 	return level
 }
-func failure(ui terminal, err error) int { fmt.Fprintln(ui.err, err); return 1 }
+func failure(ui terminal, err error) int {
+	fmt.Fprintln(ui.err, err)
+	if errors.Is(err, cloudflare.ErrUncertainWrite) {
+		return 5
+	}
+	return 1
+}
 func result(ui terminal, err error) int {
 	if err != nil {
 		return failure(ui, err)

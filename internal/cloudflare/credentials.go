@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/gatework/derper-go/internal/fileio"
 )
@@ -37,7 +38,7 @@ func (c Credentials) ReadEnv(getenv func(string) string) (string, error) {
 
 func ValidateToken(value string) (string, error) {
 	value = strings.TrimSpace(value)
-	if value == "" || strings.IndexFunc(value, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 || len(value) > 8192 {
+	if !utf8.ValidString(value) || value == "" || strings.IndexFunc(value, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 || len(value) > 8192 {
 		return "", errors.New("凭据为空或格式无效，请重新输入 Cloudflare API Token")
 	}
 	return value, nil

@@ -29,7 +29,7 @@ func CertificateOptions(s config.Settings, dir string) certificate.Options {
 	return certificate.Options{Domain: s.Domain, Email: s.Email, AcceptTerms: true, DirectoryURL: s.CA, CacheDir: filepath.Join(dir, "certificates"), Cloudflare: certificate.CloudflareOptions{ZoneID: s.ZoneID, TokenFile: credential.File}}
 }
 func NewDNSPublisher(s config.Settings, dir string, approved []cloudflare.Record) *dns.Publisher {
-	client := cloudflare.NewSource(cloudflare.RuntimeCredentials(s.TokenFile).Read, s.ZoneID, cloudflare.HTTPClient())
+	client := cloudflare.NewSource(cloudflare.RuntimeCredentials(s.TokenFile).Read, s.ZoneID, nil)
 	ipv4, ipv6 := "", ""
 	if s.IPv4.IsValid() {
 		ipv4 = s.IPv4.String()
@@ -199,7 +199,11 @@ func run(parent context.Context, s config.Settings, dir, path string, signals <-
 		if e != nil {
 			logger.Debug("没有初始化 DNS 快照", "error", e)
 		}
-		workers.Go(func() { NewDNSPublisher(s, dir, deployment.ApprovedDNS).Run(ctx, logger, health.dns) })
+		workers.Go(func() {
+			publisher := NewDNSPublisher(s, dir, deployment.ApprovedDNS)
+			defer publisher.Close()
+			publisher.Run(ctx, logger, health.dns)
+		})
 	} else {
 		health.dnsDisabled()
 	}

@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -122,7 +123,9 @@ func (m *Store) loadCertificate() error {
 	return nil
 }
 
-func (m *Store) install(bundle []byte) error {
+func (m *Store) install(bundle []byte) error { return m.installWith(bundle, atomicWrite) }
+
+func (m *Store) installWith(bundle []byte, write func(string, []byte) error) error {
 	pair, err := m.parseCertificate(bundle)
 	if err != nil {
 		return err
@@ -131,11 +134,17 @@ func (m *Store) install(bundle []byte) error {
 	if now.Before(pair.Leaf.NotBefore) || !now.Before(pair.Leaf.NotAfter) {
 		return fmt.Errorf("ACME returned a certificate outside its validity period")
 	}
-	if err = atomicWrite(filepath.Join(m.cachePath, "certificate.pem"), bundle); err != nil {
+	if err = write(filepath.Join(m.cachePath, "certificate.pem"), bundle); err != nil {
+		var published *state.PublishedError
+		if errors.As(err, &published) {
+			m.current.Store(pair)
+			m.needsSync.Store(true)
+		}
 		return fmt.Errorf("save ACME certificate: %w", err)
 	}
 	// 磁盘完整替换成功后才发布新证书，握手无需磁盘或网络 I/O。
 	m.current.Store(pair)
+	m.needsSync.Store(false)
 	return nil
 }
 

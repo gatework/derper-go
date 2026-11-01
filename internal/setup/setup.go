@@ -95,7 +95,8 @@ func stunAvailable(ctx context.Context, host string, port int) bool {
 	return true
 }
 func inspectDNS(ctx context.Context, s config.Settings, dir, token string) ([]dns.Change, error) {
-	api := cloudflare.NewSource(func() (string, error) { return token, nil }, s.ZoneID, cloudflare.HTTPClient())
+	api := cloudflare.NewSource(func() (string, error) { return token, nil }, s.ZoneID, nil)
+	defer api.Close()
 	if err := api.CheckZone(ctx, s.Domain); err != nil {
 		return nil, err
 	}
@@ -112,7 +113,9 @@ func inspectDNS(ctx context.Context, s config.Settings, dir, token string) ([]dn
 	return dns.New(dns.Options{Domain: s.Domain, StateDir: dir, Publish: true, IPv4: ipv4, IPv6: ipv6}, api).Plan(ctx)
 }
 func discoverTerms(ctx context.Context, ca string) (string, error) {
-	directory, err := (&acme.Client{DirectoryURL: ca, HTTPClient: cloudflare.HTTPClient()}).Discover(ctx)
+	httpClient := cloudflare.HTTPClient()
+	defer httpClient.CloseIdleConnections()
+	directory, err := (&acme.Client{DirectoryURL: ca, HTTPClient: httpClient}).Discover(ctx)
 	if err != nil {
 		return "", fmt.Errorf("读取证书机构服务条款：%w", err)
 	}

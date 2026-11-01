@@ -2,6 +2,7 @@ package certificate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/gatework/derper-go/internal/cloudflare"
 	"github.com/gatework/derper-go/internal/retry"
+	"github.com/gatework/derper-go/internal/state"
 )
 
 const certificateCheckInterval = time.Hour
@@ -109,7 +111,12 @@ func (m *Renewer) Start(parent context.Context) (err error) {
 	cached := cachedErr == nil
 	if !cached {
 		if err = m.renew(ctx); err != nil {
-			return fmt.Errorf("initial ACME issuance: %w", err)
+			var published *state.PublishedError
+			if _, valid := m.GetCertificate(nil); valid != nil || !errors.As(err, &published) {
+				return fmt.Errorf("initial ACME issuance: %w", err)
+			}
+			m.failure.Store(&renewalFailure{err})
+			err = nil
 		}
 	}
 	if err = ctx.Err(); err != nil {
@@ -118,11 +125,20 @@ func (m *Renewer) Start(parent context.Context) (err error) {
 	m.wg.Add(1)
 	go m.maintainCleanup(ctx)
 	m.wg.Add(1)
-	go m.maintainScheduled(ctx, certificateCheckInterval, "ACME renewal", m.maintainCertificate, cached, m.certificateCheckDelay)
+	go m.maintainScheduled(ctx, certificateCheckInterval, "ACME renewal", m.maintainCertificate, cached || m.needsSync.Load(), m.certificateCheckDelay)
 	return nil
 }
 
 func (m *Renewer) maintainCertificate(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if m.needsSync.Load() {
+		if err := state.SyncDirectory(m.cachePath); err != nil {
+			return err
+		}
+		m.needsSync.Store(false)
+	}
 	if m.renewDue(time.Now()) {
 		return m.renew(ctx)
 	}
@@ -218,6 +234,7 @@ func (m *Renewer) Close() {
 	}
 	m.closeOnce.Do(func() {
 		m.wg.Wait()
+		m.http.CloseIdleConnections()
 		if m.lock != nil {
 			_ = syscall.Flock(int(m.lock.Fd()), syscall.LOCK_UN)
 			_ = m.lock.Close()

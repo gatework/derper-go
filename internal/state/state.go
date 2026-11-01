@@ -72,6 +72,28 @@ func WriteSnapshot(path string, value any) error {
 }
 
 func writeFile(path string, data []byte, mode os.FileMode, exclusive, durable bool) error {
+	return writeFileWithSync(path, data, mode, exclusive, durable, SyncDirectory)
+}
+
+// PublishedError means the complete file is visible, but crash durability has
+// not been confirmed. Callers must preserve it instead of treating it as absent.
+type PublishedError struct{ Err error }
+
+func (e *PublishedError) Error() string {
+	return "文件已发布，但目录同步失败：" + e.Err.Error()
+}
+func (e *PublishedError) Unwrap() error { return e.Err }
+
+func SyncDirectory(path string) error {
+	d, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
+}
+
+func writeFileWithSync(path string, data []byte, mode os.FileMode, exclusive, durable bool, syncDirectory func(string) error) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".derper-*")
 	if err != nil {
 		return err
@@ -103,12 +125,10 @@ func writeFile(path string, data []byte, mode os.FileMode, exclusive, durable bo
 	if !durable {
 		return nil
 	}
-	d, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
+	if err := syncDirectory(filepath.Dir(path)); err != nil {
+		return &PublishedError{Err: err}
 	}
-	defer d.Close()
-	return d.Sync()
+	return nil
 }
 
 // Store owns a deployment's writer lock until all workers have stopped.

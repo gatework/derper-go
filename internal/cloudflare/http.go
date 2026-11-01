@@ -7,5 +7,9 @@ import (
 )
 
 func HTTPClient() *http.Client {
-	return &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("不允许 HTTP 重定向") }}
+	transport := http.DefaultTransport
+	if t, ok := transport.(*http.Transport); ok {
+		transport = t.Clone()
+	}
+	return &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("不允许 HTTP 重定向") }}
 }

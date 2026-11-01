@@ -14,6 +14,7 @@ import (
 type Store struct {
 	domain    string
 	current   atomic.Pointer[tls.Certificate]
+	needsSync atomic.Bool
 	cachePath string
 	lock      *os.File
 }
